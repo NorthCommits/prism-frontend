@@ -402,7 +402,7 @@ export default function Home() {
                   <span>New Chat</span>
                 </button>
 
-                <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <div className="mb-2 px-3 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/50">
                   Recent
                 </div>
 
@@ -524,6 +524,7 @@ export default function Home() {
             <ChatWindow
               messages={messages}
               modelsById={modelsById}
+              isLoading={isLoading}
               onQuoteReply={handleQuoteReply}
               onSuggestionClick={(text) => {
                 setInputValue(text);

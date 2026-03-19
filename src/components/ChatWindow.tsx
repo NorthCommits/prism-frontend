@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Children,
+  isValidElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
 import {
   Check,
   ChevronDown,
@@ -17,10 +25,17 @@ import {
 import type { AvailableModel, ChatMessage, ModelId } from "../lib/api";
 import { PlotRenderer } from "@/components/PlotRenderer";
 import { ImageRenderer } from "@/components/ImageRenderer";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Components } from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 type ChatWindowProps = {
   messages: ChatMessage[];
   modelsById?: Record<ModelId, AvailableModel>;
+  /** When true, shows assistant-style typing dots at the end of the thread. */
+  isLoading?: boolean;
   onQuoteReply?: (text: string) => void;
   onSuggestionClick?: (text: string) => void;
 };
@@ -52,8 +67,225 @@ function parseContentSegments(text: string): Array<
   return segments;
 }
 
+// Icon-only copy control for fenced code headers; shows a checkmark briefly after copy.
+function CopyCodeButton(props: { code: string }) {
+  const { code } = props;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await window.navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Ignore clipboard errors.
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied" : "Copy code"}
+      className="inline-flex items-center justify-center rounded p-0.5 text-xs text-muted-foreground transition-colors hover:text-white"
+    >
+      {copied ? (
+        <Check className="size-3.5" aria-hidden />
+      ) : (
+        <Copy className="size-3.5" aria-hidden />
+      )}
+    </button>
+  );
+}
+
+// Fenced assistant code: Prism theme bar + syntax-highlighted body with scroll cap.
+function MarkdownFencedCode(props: { code: string; language?: string }) {
+  const { code, language } = props;
+  const prismLanguage = language && language.length > 0 ? language : "markup";
+  const headerLabel = language && language.length > 0 ? language : "code";
+
+  return (
+    <div className="relative mb-3">
+      <div className="flex items-center justify-between rounded-t-lg border-b border-white/10 bg-[#1a1a2e] px-4 py-2">
+        <span className="font-mono text-xs text-muted-foreground">
+          {headerLabel}
+        </span>
+        <CopyCodeButton code={code} />
+      </div>
+      <SyntaxHighlighter
+        style={oneDark}
+        language={prismLanguage}
+        PreTag="div"
+        customStyle={{
+          margin: 0,
+          borderRadius: "0 0 8px 8px",
+          fontSize: "13px",
+          maxHeight: "400px",
+          overflow: "auto",
+        }}
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+
+// Renders assistant text as GitHub-flavored markdown with Prism-themed styles.
+function AssistantMarkdown(props: { content: string }) {
+  const { content } = props;
+
+  const markdownComponents: Partial<Components> = {
+    h1: ({ children, ...rest }) => (
+      <h1 className="mt-4 mb-3 text-2xl font-bold" {...rest}>
+        {children}
+      </h1>
+    ),
+    h2: ({ children, ...rest }) => (
+      <h2 className="mt-4 mb-2 text-xl font-bold" {...rest}>
+        {children}
+      </h2>
+    ),
+    h3: ({ children, ...rest }) => (
+      <h3 className="mt-3 mb-2 text-lg font-semibold" {...rest}>
+        {children}
+      </h3>
+    ),
+    p: ({ children, ...rest }) => (
+      <p className="mb-3 leading-relaxed last:mb-0" {...rest}>
+        {children}
+      </p>
+    ),
+    ul: ({ children, ...rest }) => (
+      <ul
+        className="mb-3 ml-4 list-outside list-disc space-y-1"
+        {...rest}
+      >
+        {children}
+      </ul>
+    ),
+    ol: ({ children, ...rest }) => (
+      <ol
+        className="mb-3 ml-4 list-outside list-decimal space-y-1"
+        {...rest}
+      >
+        {children}
+      </ol>
+    ),
+    li: ({ children, ...rest }) => (
+      <li className="leading-relaxed" {...rest}>
+        {children}
+      </li>
+    ),
+    blockquote: ({ children, ...rest }) => (
+      <blockquote
+        className="mb-3 border-l-[3px] border-[#7c3aed] pl-4 italic text-muted-foreground"
+        {...rest}
+      >
+        {children}
+      </blockquote>
+    ),
+    hr: ({ ...rest }) => (
+      <hr className="mt-4 mb-4 border-border" {...rest} />
+    ),
+    a: ({ children, href, ...rest }) => (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-purple-500 hover:underline"
+        {...rest}
+      >
+        {children}
+      </a>
+    ),
+    strong: ({ children, ...rest }) => (
+      <strong className="font-semibold" {...rest}>
+        {children}
+      </strong>
+    ),
+    em: ({ children, ...rest }) => (
+      <em className="italic" {...rest}>
+        {children}
+      </em>
+    ),
+    table: ({ children, ...rest }) => (
+      <div className="mb-3 w-full overflow-x-auto">
+        <table className="w-full border-collapse" {...rest}>
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children, ...rest }) => <thead {...rest}>{children}</thead>,
+    tbody: ({ children, ...rest }) => (
+      <tbody className="[&>tr:nth-child(even)]:bg-muted/35" {...rest}>
+        {children}
+      </tbody>
+    ),
+    tr: ({ children, ...rest }) => <tr {...rest}>{children}</tr>,
+    th: ({ children, ...rest }) => (
+      <th
+        className="border border-border bg-muted px-4 py-2 text-left font-semibold"
+        {...rest}
+      >
+        {children}
+      </th>
+    ),
+    td: ({ children, ...rest }) => (
+      <td className="border border-border px-4 py-2" {...rest}>
+        {children}
+      </td>
+    ),
+    // Fenced / indented code is always `pre` > `code` in the AST; render the block UI here.
+    pre: ({ children }) => {
+      try {
+        const child = Children.only(children);
+        if (isValidElement(child) && child.type === "code") {
+          const props = child.props as {
+            className?: string;
+            children?: ReactNode;
+          };
+          const codeText = String(props.children ?? "").replace(/\n$/, "");
+          const match = /language-([\w-]+)/.exec(props.className ?? "");
+          return (
+            <MarkdownFencedCode code={codeText} language={match?.[1]} />
+          );
+        }
+      } catch {
+        // Multiple children or empty: fall back to a normal pre.
+      }
+      return (
+        <pre className="mb-3 max-h-[400px] overflow-y-auto overflow-x-auto rounded-lg bg-[#f4f4f8] p-4 font-mono text-sm dark:bg-[#1a1a2e]">
+          {children}
+        </pre>
+      );
+    },
+    // Inline `code` only (fenced blocks render via `pre` + MarkdownFencedCode).
+    code: ({ className, children }) => (
+      <code
+        className={`rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-sm text-purple-400 ${className ?? ""}`}
+      >
+        {children}
+      </code>
+    ),
+  };
+
+  return (
+    <div className="text-[15px] leading-relaxed">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 export function ChatWindow(props: ChatWindowProps) {
-  const { messages, modelsById, onQuoteReply, onSuggestionClick } = props;
+  const {
+    messages,
+    modelsById,
+    isLoading = false,
+    onQuoteReply,
+    onSuggestionClick,
+  } = props;
   // Scroll container ref to keep view pinned to bottom.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -64,7 +296,7 @@ export function ChatWindow(props: ChatWindowProps) {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isLoading]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -108,13 +340,11 @@ export function ChatWindow(props: ChatWindowProps) {
         const routingReason = chatMessage.routing_reason;
         const searchUsed = chatMessage.search_used;
         const searchQuery = chatMessage.search_query;
-        const effectiveModelId = routedTo ?? baseModelId;
-
-        const modelLabelId = effectiveModelId ?? "auto";
-
-        const segments = parseContentSegments(String((message as any).content));
 
         const plainText = String((message as any).content ?? "");
+        const segments = isUser
+          ? parseContentSegments(plainText)
+          : ([] as ReturnType<typeof parseContentSegments>);
 
         const handleCopy = async () => {
           try {
@@ -145,15 +375,18 @@ export function ChatWindow(props: ChatWindowProps) {
             className={`group flex w-full flex-col gap-1.5 ${alignClass} animate-in fade-in-0 slide-in-from-bottom-1`}
           >
             {!isUser && (
-              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <div className="flex items-center text-[11px] text-muted-foreground">
                 <span
-                  className={`inline-flex size-2 rounded-full ${
-                    modelLabelId === "coding"
-                      ? "bg-[#7c3aed]"
-                      : modelLabelId === "writing"
-                      ? "bg-[#2563eb]"
-                      : "bg-[#06b6d4]"
-                  }`}
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #7c3aed, #2563eb, #06b6d4)",
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    display: "inline-block",
+                    marginRight: "6px",
+                  }}
+                  aria-hidden
                 />
                 <span className="font-medium uppercase tracking-wide">
                   Prism
@@ -207,7 +440,7 @@ export function ChatWindow(props: ChatWindowProps) {
                   chatMessage.response_type === "image" &&
                   chatMessage.image_url ? (
                   <ImageRenderer image_url={chatMessage.image_url} />
-                ) : (
+                ) : isUser ? (
                   <>
                     {segments.map((segment, idx) =>
                       segment.type === "text" ? (
@@ -248,13 +481,20 @@ export function ChatWindow(props: ChatWindowProps) {
                       )
                     )}
                   </>
+                ) : (
+                  <AssistantMarkdown content={plainText} />
                 )}
               </div>
 
               {!isUser && baseModelId === "auto" && routedTo && (
-                <div className="inline-flex max-w-[80%] items-start gap-1.5 rounded-full border border-[#7c3aed33] bg-gradient-to-r from-[#7c3aed1a] to-[#2563eb1a] px-3 py-1.5 text-[11px] leading-snug text-muted-foreground">
-                  <span className="mt-[1px] text-xs">✦</span>
-                  <span className="whitespace-pre-wrap">
+                <div className="inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[#7c3aed]/10 bg-gradient-to-r from-[#7c3aed]/[0.06] to-[#2563eb]/[0.06] px-2 py-1 text-xs leading-snug text-muted-foreground dark:border-[#7c3aed]/15 dark:from-[#7c3aed]/[0.08] dark:to-[#2563eb]/[0.08]">
+                  <span
+                    className="mt-px shrink-0 text-[12px] leading-none text-muted-foreground"
+                    aria-hidden
+                  >
+                    ✦
+                  </span>
+                  <span className="whitespace-pre-wrap text-muted-foreground">
                     Auto-routed to{" "}
                     {routedTo === "coding" ? "Coding" : "Writing"}
                     {routingReason
@@ -384,6 +624,41 @@ export function ChatWindow(props: ChatWindowProps) {
       ) : (
         <div className="mx-auto flex w-full max-w-[768px] flex-col gap-6">
           {renderedMessages}
+          {isLoading && (
+            <div className="flex w-full flex-col gap-1.5 items-start animate-in fade-in duration-300">
+              <div className="flex items-center text-[11px] text-muted-foreground">
+                <span
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #7c3aed, #2563eb, #06b6d4)",
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    display: "inline-block",
+                    marginRight: "6px",
+                  }}
+                  aria-hidden
+                />
+                <span className="font-medium uppercase tracking-wide">
+                  Prism
+                </span>
+              </div>
+              <div className="flex max-w-[78%] items-center gap-1.5 rounded-2xl px-5 py-3.5">
+                <span
+                  className="typing-dot-animate size-2 shrink-0 rounded-full bg-[#7c3aed]"
+                  aria-hidden
+                />
+                <span
+                  className="typing-dot-animate typing-dot-delay-1 size-2 shrink-0 rounded-full bg-[#2563eb]"
+                  aria-hidden
+                />
+                <span
+                  className="typing-dot-animate typing-dot-delay-2 size-2 shrink-0 rounded-full bg-[#06b6d4]"
+                  aria-hidden
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>

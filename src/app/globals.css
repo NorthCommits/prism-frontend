@@ -164,3 +164,27 @@
     width: 100%;
   }
 }
+
+/* Staggered bounce for chat typing indicator (three dots). */
+@keyframes typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-8px);
+  }
+}
+
+.typing-dot-animate {
+  animation: typing-bounce 1s ease-in-out infinite;
+}
+
+.typing-dot-delay-1 {
+  animation-delay: 0.15s;
+}
+
+.typing-dot-delay-2 {
+  animation-delay: 0.3s;
+}
