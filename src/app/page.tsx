@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   MessageSquare,
   Plus,
-  Circle,
+  Menu,
+  Sun,
+  Moon,
   Trash2,
   PanelLeftClose,
-  PanelLeftOpen,
   LogOut,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -19,12 +20,13 @@ import {
   HistoryMessage,
   ModelId,
   fetchModels,
-  sendMessage,
+  sendMessageStream,
 } from "../lib/api";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatWindow } from "@/components/ChatWindow";
 import { ModelToggle } from "@/components/ModelToggle";
 import { SplashScreen } from "@/components/SplashScreen";
+import { ToastContainer, ToastProvider, pushToast } from "@/components/Toast";
 import {
   Conversation,
   deleteConversation,
@@ -49,6 +51,7 @@ function formatRelativeTime(isoDate: string): string {
 }
 
 export default function Home() {
+  type UserLike = { email?: string | null };
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [modelsById, setModelsById] = useState<
     Record<ModelId, AvailableModel>
@@ -62,11 +65,88 @@ export default function Home() {
   );
   const [isConversationsLoading, setIsConversationsLoading] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [user, setUser] = useState<any | null>(null);
+  const [isSidebarContentVisible, setIsSidebarContentVisible] = useState(true);
+  const [user, setUser] = useState<UserLike | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [lastSentMessage, setLastSentMessage] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [newConversationId, setNewConversationId] = useState<string | null>(
+    null
+  );
+  const [deletingConversationId, setDeletingConversationId] = useState<
+    string | null
+  >(null);
+  const [deletingConversationStage, setDeletingConversationStage] = useState<
+    "out" | "collapse"
+  >("out");
+  const [isSplashWarping, setIsSplashWarping] = useState(false);
+  const [isChatWarpingIn, setIsChatWarpingIn] = useState(false);
+  const [isChatShaking, setIsChatShaking] = useState(false);
+  // Track whether the splash overlay should exist in the DOM at all.
+  // Always starts as true so the server and first client render match (no
+  // hydration mismatch). A one-time effect immediately hides it on the client
+  // if the user has already dismissed it.
+  const [showSplash, setShowSplash] = useState(true);
+  useEffect(() => {
+    if (window.sessionStorage.getItem("prism_splash_shown") === "1") {
+      setShowSplash(false);
+    }
+  }, []);
+  const splashWarpTimeoutsRef = useRef<number[]>([]);
+  const sidebarAnimTimeoutsRef = useRef<number[]>([]);
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const currentTheme = theme === "system" ? resolvedTheme : theme;
+  const isDarkTheme = currentTheme === "dark";
+  const [isThemeRotating, setIsThemeRotating] = useState(false);
+  const didMountThemeRef = useRef(false);
+  useEffect(() => {
+    if (!didMountThemeRef.current) {
+      didMountThemeRef.current = true;
+      return;
+    }
+    setIsThemeRotating(true);
+    const t = window.setTimeout(() => setIsThemeRotating(false), 400);
+    return () => window.clearTimeout(t);
+  }, [isDarkTheme]);
   const router = useRouter();
   const supabase = createClient();
+  const touchStartXRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const isCmdOrCtrl = event.metaKey || event.ctrlKey;
+
+      if (isCmdOrCtrl && key === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+
+      if (isCmdOrCtrl && key === "n") {
+        event.preventDefault();
+        handleCreateConversation();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      splashWarpTimeoutsRef.current.forEach((t) => window.clearTimeout(t));
+      splashWarpTimeoutsRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      sidebarAnimTimeoutsRef.current.forEach((t) =>
+        window.clearTimeout(t)
+      );
+      sidebarAnimTimeoutsRef.current = [];
+    };
+  }, []);
 
   // Load available models as soon as the page mounts.
   useEffect(() => {
@@ -101,7 +181,7 @@ export default function Home() {
         router.push("/login");
         return;
       }
-      setUser(session.user);
+      setUser(session.user as UserLike);
     };
     initAuth();
 
@@ -112,7 +192,7 @@ export default function Home() {
         setUser(null);
         router.push("/login");
       } else {
-        setUser(session.user);
+        setUser(session.user as UserLike);
       }
     });
 
@@ -126,28 +206,76 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
       const stored = window.localStorage.getItem("prism_sidebar_collapsed");
-      if (stored !== null) {
-        setIsSidebarCollapsed(stored === "1");
-      } else if (window.innerWidth < 768) {
-        setIsSidebarCollapsed(true);
-      }
+      const initialCollapsed =
+        mobile ? true : stored !== null ? stored === "1" : false;
+      setIsSidebarCollapsed(initialCollapsed);
+      setIsSidebarContentVisible(!initialCollapsed);
     } catch {
       // Ignore storage errors.
     }
   }, []);
 
   const toggleSidebar = () => {
-    setIsSidebarCollapsed((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem("prism_sidebar_collapsed", next ? "1" : "0");
-      } catch {
-        // Ignore storage errors.
-      }
-      return next;
-    });
+    // Mobile uses translate-based open/close; keep it instant.
+    if (isMobile) {
+      setIsSidebarCollapsed((prev) => {
+        const next = !prev;
+        setIsSidebarContentVisible(!next);
+        try {
+          window.localStorage.setItem(
+            "prism_sidebar_collapsed",
+            next ? "1" : "0"
+          );
+        } catch {
+          // Ignore storage errors.
+        }
+        return next;
+      });
+      return;
+    }
+
+    // Desktop cinematic collapse/expand:
+    // - Collapse: fade out content (150ms) -> collapse width (250ms).
+    // - Expand: expand width (250ms) -> fade in content (150ms).
+    sidebarAnimTimeoutsRef.current.forEach((t) => window.clearTimeout(t));
+    sidebarAnimTimeoutsRef.current = [];
+
+    if (!isSidebarCollapsed) {
+      // Start fading out immediately, delay the width collapse.
+      setIsSidebarContentVisible(false);
+      const t = window.setTimeout(() => {
+        setIsSidebarCollapsed(true);
+        try {
+          window.localStorage.setItem("prism_sidebar_collapsed", "1");
+        } catch {
+          // Ignore storage errors.
+        }
+      }, 150);
+      sidebarAnimTimeoutsRef.current.push(t);
+      return;
+    }
+
+    // Start expanding the width immediately, delay content fade-in.
+    setIsSidebarContentVisible(false);
+    setIsSidebarCollapsed(false);
+    try {
+      window.localStorage.setItem("prism_sidebar_collapsed", "0");
+    } catch {
+      // Ignore storage errors.
+    }
+    const t = window.setTimeout(() => {
+      setIsSidebarContentVisible(true);
+    }, 250);
+    sidebarAnimTimeoutsRef.current.push(t);
   };
+
+  useEffect(() => {
+    if (!isMobile) return;
+    setIsSidebarContentVisible(!isSidebarCollapsed);
+  }, [isMobile, isSidebarCollapsed]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -191,6 +319,59 @@ export default function Home() {
     setActiveConversationId(null);
     setMessages([]);
     setInputValue("");
+
+    // Cinematic splash -> chat warp transition.
+    splashWarpTimeoutsRef.current.forEach((t) => window.clearTimeout(t));
+    splashWarpTimeoutsRef.current = [];
+
+    setIsSplashWarping(true);
+    setIsChatWarpingIn(false);
+    setIsChatShaking(false);
+
+    // 400ms: start chat zoom-in.
+    splashWarpTimeoutsRef.current.push(
+      window.setTimeout(() => {
+        setIsChatWarpingIn(true);
+      }, 400)
+    );
+
+    // 600ms: splash overlay can stop its own zoom animation.
+    splashWarpTimeoutsRef.current.push(
+      window.setTimeout(() => {
+        setIsSplashWarping(false);
+      }, 600)
+    );
+
+    // 700ms: brief shake for landing impact.
+    splashWarpTimeoutsRef.current.push(
+      window.setTimeout(() => {
+        setIsChatShaking(true);
+        splashWarpTimeoutsRef.current.push(
+          window.setTimeout(() => {
+            setIsChatShaking(false);
+          }, 300)
+        );
+      }, 700)
+    );
+
+    // 900ms: chat spring-in animation is done (~300ms from t=400). Reset classes
+    // so the element isn't frozen in an animated state.
+    splashWarpTimeoutsRef.current.push(
+      window.setTimeout(() => {
+        setIsChatWarpingIn(false);
+      }, 900)
+    );
+
+    // 1100ms: safety cleanup — fully remove splash overlay and reset all warp
+    // states regardless of what happened above.
+    splashWarpTimeoutsRef.current.push(
+      window.setTimeout(() => {
+        setShowSplash(false);
+        setIsSplashWarping(false);
+        setIsChatWarpingIn(false);
+        setIsChatShaking(false);
+      }, 1100)
+    );
   };
 
   const handleOpenConversation = async (id: string) => {
@@ -199,7 +380,7 @@ export default function Home() {
       const items = await getConversationMessages(id);
       const mapped: ChatMessage[] = items.map((message) => ({
         role: message.role,
-        content: message.content as any,
+        content: message.content,
         model_id: message.model_id as ModelId | undefined,
         routed_to: message.routed_to as ModelId | undefined,
         routing_reason: message.routing_reason ?? undefined,
@@ -213,15 +394,31 @@ export default function Home() {
   };
 
   const handleDeleteConversation = async (id: string) => {
-    try {
-      await deleteConversation(id);
-      await refreshConversations();
-    } catch {
-      // Ignore delete failures for now.
-    }
-    if (activeConversationId === id) {
+    setDeletingConversationId(id);
+    setDeletingConversationStage("out");
+
+    const wasActive = activeConversationId === id;
+    if (wasActive) {
       setActiveConversationId(null);
       setMessages([]);
+    }
+
+    try {
+      await deleteConversation(id);
+
+      window.setTimeout(() => {
+        setDeletingConversationStage("collapse");
+      }, 250);
+
+      window.setTimeout(async () => {
+        setDeletingConversationId(null);
+        setDeletingConversationStage("out");
+        await refreshConversations();
+      }, 450);
+    } catch {
+      setDeletingConversationId(null);
+      setDeletingConversationStage("out");
+      pushToast("Something went wrong", "error");
     }
   };
 
@@ -233,10 +430,12 @@ export default function Home() {
       return;
     }
 
+    setLastSentMessage(message);
+
     const userMessage: ChatMessage = {
       role: "user",
       // Casting for compatibility with the existing API message shape.
-      content: message as any,
+      content: message,
       file_used: !!file,
       file_name: file?.file_name,
       file_type: file?.file_type,
@@ -254,6 +453,12 @@ export default function Home() {
         );
         conversationId = conversation.id;
         setActiveConversationId(conversation.id);
+        setNewConversationId(conversation.id);
+        window.setTimeout(() => {
+          setNewConversationId((current) =>
+            current === conversation.id ? null : current
+          );
+        }, 300);
         await refreshConversations();
       } catch {
         return;
@@ -277,69 +482,134 @@ export default function Home() {
       // Ignore message save failure for user message.
     }
 
-    try {
-      const history: HistoryMessage[] = messages.map((item) => ({
-        role: item.role,
-        content: String(item.content),
-      }));
+    const history: HistoryMessage[] = messages.map((item) => ({
+      role: item.role,
+      content: String(item.content),
+    }));
 
-      const response = await sendMessage(
+    // Create a placeholder assistant message and stream the response into it.
+    const assistantPlaceholder: ChatMessage = {
+      role: "assistant",
+      content: "",
+      model_id: selectedModel,
+      isStreaming: true,
+    };
+
+    const initialMessages = [...userMessages, assistantPlaceholder];
+    setMessages(initialMessages);
+
+    let assistantContent = "";
+    let latestMetadata:
+      | (Partial<{
+          reply: string;
+          routed_to?: string;
+          routing_reason?: string;
+          search_used?: boolean;
+          search_query?: string;
+          response_type?: "text" | "plot" | "image";
+          plot_json?: object;
+          image_url?: string;
+        }> &
+          Record<string, unknown>)
+      | null = null;
+
+    try {
+      await sendMessageStream(
         message,
         selectedModel,
+        history,
+        (token) => {
+          assistantContent += token;
+          setMessages((prev) =>
+            prev.map((m, i) =>
+              i === prev.length - 1 ? { ...m, content: m.content + token } : m
+            )
+          );
+        },
+        (metadata) => {
+          latestMetadata = metadata;
+          setMessages((prev) =>
+            prev.map((m, i) => {
+              if (i !== prev.length - 1) return m;
+
+              const next: ChatMessage = {
+                ...m,
+                routed_to: (metadata.routed_to as ModelId | undefined) ?? m.routed_to,
+                routing_reason: metadata.routing_reason,
+                search_used: metadata.search_used,
+                search_query: metadata.search_query,
+                response_type: metadata.response_type,
+                plot_json: metadata.plot_json,
+                image_url: metadata.image_url,
+              };
+
+              // Plot/image responses come back as JSON; use full reply there.
+              if (
+                metadata.response_type &&
+                metadata.response_type !== "text" &&
+                typeof metadata.reply === "string"
+              ) {
+                assistantContent = metadata.reply;
+                next.content = metadata.reply;
+              }
+
+              return next;
+            })
+          );
+        },
+        () => {
+          setIsLoading(false);
+
+          setMessages((prev) =>
+            prev.map((m, i) =>
+              i === prev.length - 1 ? { ...m, isStreaming: false } : m
+            )
+          );
+
+          void (async () => {
+            if (!conversationId) return;
+            try {
+              await saveMessage({
+                conversation_id: conversationId!,
+                role: "assistant",
+                content: assistantContent,
+                model_id: selectedModel,
+                routed_to: latestMetadata?.routed_to,
+                routing_reason: latestMetadata?.routing_reason,
+                search_used: latestMetadata?.search_used,
+                search_query: latestMetadata?.search_query,
+              });
+              await refreshConversations();
+            } catch {
+              // Ignore assistant save failure.
+            }
+          })();
+        },
+        (error) => {
+          pushToast("Something went wrong", "error");
+          setIsLoading(false);
+          setMessages((prev) =>
+            prev.map((m, i) =>
+              i === prev.length - 1
+                ? { ...m, content: error, isStreaming: false }
+                : m
+            )
+          );
+        },
         file?.file_name,
         file?.file_type,
-        file?.file_content,
-        history
+        file?.file_content
       );
-      const assistantMessage: ChatMessage = {
-        role: "assistant",
-        content: response.reply,
-        model_id: selectedModel,
-        routed_to: (response.routed_to as ModelId | undefined) ?? undefined,
-        routing_reason: response.routing_reason,
-        search_used: response.search_used,
-        search_query: response.search_query,
-        response_type: response.response_type,
-        plot_json: response.plot_json,
-        image_url: response.image_url,
-      };
-      const fullMessages = [...userMessages, assistantMessage];
-      setMessages(fullMessages);
-      try {
-        await saveMessage({
-          conversation_id: conversationId!,
-          role: "assistant",
-          content: response.reply,
-          model_id: selectedModel,
-          routed_to: response.routed_to,
-          routing_reason: response.routing_reason,
-          search_used: response.search_used,
-          search_query: response.search_query,
-        });
-        await refreshConversations();
-      } catch {
-        // Ignore assistant save failure.
-      }
     } catch {
-      const errorMessage: ChatMessage = {
-        role: "assistant",
-        content: "Something went wrong, please try again." as any,
-      } as ChatMessage;
-      const fullMessages = [...userMessages, errorMessage];
-      setMessages(fullMessages);
-      try {
-        await saveMessage({
-          conversation_id: conversationId!,
-          role: "assistant",
-          content: errorMessage.content as any,
-          model_id: selectedModel,
-        });
-        await refreshConversations();
-      } catch {
-        // Ignore assistant error save failure.
-      }
-    } finally {
+      pushToast("Something went wrong", "error");
       setIsLoading(false);
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === prev.length - 1
+            ? { ...m, content: "Something went wrong, please try again.", isStreaming: false }
+            : m
+        )
+      );
     }
   };
 
@@ -355,48 +625,107 @@ export default function Home() {
     }, 0);
   };
 
+  // Warp class for the chat content area (not the sidebar or input).
+  // Only applies while the splash is transitioning; once showSplash is false
+  // no animation classes are set so the element stays naturally visible.
+  const chatWarpClass = !showSplash
+    ? ""
+    : isChatWarpingIn
+    ? "prism-warp-chat-in"
+    : "prism-warp-chat-pre";
+
   return (
-    <>
-      <SplashScreen onEnter={handleSplashEnter} />
-      <div className="min-h-screen bg-background text-foreground transition-colors duration-200">
-        {/* Fixed sidebar */}
+    <ToastProvider>
+      <>
+      {/*
+        Splash overlay — conditionally mounted so it is fully removed from the
+        DOM (no pointer-event blocking, no z-index residue) once the transition
+        is complete. pointer-events are also disabled during the warp itself.
+      */}
+      {showSplash && (
+        <div
+          className="fixed inset-0 z-[9999]"
+          style={{ pointerEvents: isSplashWarping ? "none" : "auto" }}
+        >
+          <SplashScreen onEnter={handleSplashEnter} />
+          {isSplashWarping && (
+            <div className="prism-meteor-layer" aria-hidden>
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="prism-meteor-streak"
+                  style={{
+                    left: `${10 + i * 8}%`,
+                    animationDelay: `${i * 45}ms`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/*
+        Stable layout root — never has a transform applied, so all
+        position:fixed children (sidebar, input bar) anchor correctly to
+        the viewport regardless of what animation is running on the content.
+      */}
+      <div suppressHydrationWarning className="min-h-screen bg-background text-foreground transition-colors duration-200">
+        {/* Fixed sidebar — lives in the stable root so position:fixed anchors
+            to the viewport and is never affected by the warp animation. */}
         <aside
-          className={`fixed left-0 top-0 z-40 h-screen border-r border-border bg-[#f5f3ff] px-4 py-4 dark:bg-[#0d0b1a] transition-all duration-200 ${
-            isSidebarCollapsed ? "w-0 md:w-12" : "w-64"
+          className={`fixed left-0 top-0 z-40 h-screen border-r border-border bg-[#f5f3ff] px-4 py-4 dark:bg-[#0d0b1a] overflow-hidden ${
+            isMobile
+              ? `w-64 transform transition-transform duration-[300ms] ease-out ${
+                  isSidebarCollapsed ? "-translate-x-full" : "translate-x-0"
+                }`
+              : `w-[260px] transition-[max-width] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  isSidebarCollapsed ? "max-w-0" : "max-w-[260px]"
+                }`
           }`}
         >
           <div className="flex h-full flex-col">
             <div className="mb-3 flex items-center justify-between gap-2">
-              {!isSidebarCollapsed && (
-                <div className="flex items-center gap-2 overflow-hidden">
+              <div
+                className={`flex items-center gap-2 overflow-hidden transition-opacity ${
+                  isMobile ? "duration-0" : "duration-[150ms]"
+                } ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  isSidebarContentVisible ? "opacity-100" : "opacity-0"
+                } ${isSidebarContentVisible ? "" : "pointer-events-none"}`}
+              >
                   <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-sky-500 via-violet-500 to-emerald-400 text-xs font-semibold text-white shadow-sm">
                     P
                   </div>
                   <span className="truncate text-sm font-semibold tracking-tight">
                     Prism
                   </span>
-                </div>
-              )}
+              </div>
               <button
                 type="button"
                 onClick={toggleSidebar}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-xs text-foreground shadow-sm transition-colors hover:bg-muted"
+                className="hidden md:inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-xs text-foreground shadow-sm transition-colors hover:bg-muted"
                 aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               >
-                {isSidebarCollapsed ? (
-                  <PanelLeftOpen className="size-4" />
-                ) : (
-                  <PanelLeftClose className="size-4" />
-                )}
+                <PanelLeftClose
+                  className={`size-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                    isSidebarCollapsed ? "rotate-180" : "rotate-0"
+                  }`}
+                  style={{ willChange: "transform" }}
+                />
               </button>
             </div>
 
-            {!isSidebarCollapsed && (
-              <>
+            <div
+              className={`flex-1 transition-opacity ${
+                isMobile ? "duration-0" : "duration-[150ms]"
+              } ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                isSidebarContentVisible ? "opacity-100" : "opacity-0"
+              } ${isSidebarContentVisible ? "pointer-events-auto" : "pointer-events-none"}`}
+            >
                 <button
                   type="button"
                   onClick={handleCreateConversation}
-                  className="mb-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#2563eb] px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:brightness-110"
+                  className="mb-4 relative overflow-hidden inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#2563eb] px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:brightness-110 hover:shadow-[0_0_25px_rgba(124,58,237,0.25)] before:absolute before:inset-0 before:-translate-x-full before:bg-gradient-to-r before:from-transparent before:via-white/25 before:to-transparent before:transition-transform before:duration-700 hover:before:translate-x-full"
                 >
                   <Plus className="size-4" />
                   <span>New Chat</span>
@@ -423,11 +752,17 @@ export default function Home() {
                       return (
                         <div
                           key={conversation.id}
-                          className={`group flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                          className={`group relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-left cursor-pointer transition-colors duration-200 overflow-hidden ${
                             isActive
-                              ? "bg-[#e9ddff] dark:bg-[#2a1f44]"
-                              : "hover:bg-[#ede9fe] dark:hover:bg-[#1f1633]"
-                          }`}
+                              ? "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]"
+                              : "bg-transparent after:content-[''] after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200"
+                          } ${conversation.id === newConversationId ? "prism-conv-enter" : ""} ${
+                            deletingConversationId === conversation.id
+                              ? deletingConversationStage === "out"
+                                ? "prism-conv-delete-out"
+                                : "prism-conv-delete-collapse"
+                              : ""
+                          } ${isActive ? "prism-conv-active" : ""}`}
                         >
                           <button
                             type="button"
@@ -485,19 +820,71 @@ export default function Home() {
                   </div>
                   <div className="text-[10px]">Prism v0.1.0 beta</div>
                 </div>
-              </>
-            )}
+            </div>
           </div>
         </aside>
 
-        {/* Main chat area */}
+        {isMobile && !isSidebarCollapsed && (
+          <div
+            className="fixed inset-0 z-[39] bg-black/50 backdrop-blur-sm md:hidden cursor-pointer"
+            onClick={() => setIsSidebarCollapsed(true)}
+            onTouchStart={(e) => {
+              touchStartXRef.current = e.touches?.[0]?.clientX ?? null;
+            }}
+            onTouchEnd={(e) => {
+              const startX = touchStartXRef.current;
+              const endX = e.changedTouches?.[0]?.clientX ?? null;
+              touchStartXRef.current = null;
+              if (!isMobile) return;
+              if (startX === null || endX === null) return;
+              // Swipe left closes the sidebar.
+              if (startX - endX > 50) {
+                setIsSidebarCollapsed(true);
+              }
+            }}
+            aria-hidden
+          />
+        )}
+
+        {/*
+          Main content area — the ONLY element that receives warp animation.
+          Using margin-left (not translate-x) for sidebar offset so that no
+          stacking context is created that would misplace the fixed sidebar/input.
+        */}
         <div
-          className={`flex min-h-screen flex-col transition-all duration-200 ${
-            isSidebarCollapsed ? "ml-0 md:ml-12" : "ml-0 md:ml-64"
-          }`}
+          onTouchStart={(e) => {
+            if (!isMobile) return;
+            touchStartXRef.current = e.touches?.[0]?.clientX ?? null;
+          }}
+          onTouchEnd={(e) => {
+            if (!isMobile) return;
+            const startX = touchStartXRef.current;
+            const endX = e.changedTouches?.[0]?.clientX ?? null;
+            touchStartXRef.current = null;
+            if (startX === null || endX === null) return;
+            if (startX < 50 && endX - startX > 50) {
+              setIsSidebarCollapsed(false);
+            }
+          }}
+          className={`flex min-h-screen flex-col transition-[margin-left] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
+            isMobile
+              ? "ml-0"
+              : isSidebarCollapsed
+              ? "md:ml-12"
+              : "md:ml-[260px]"
+          } ${chatWarpClass} ${isChatShaking ? "prism-warp-chat-shake" : ""}`}
         >
           <header className="flex items-center justify-between border-b border-b-[#e0ddff] bg-white px-6 py-3 shadow-sm dark:border-b-[#1f2937] dark:bg-[#0d0b1a] transition-colors duration-200">
-            <div className="w-32" />
+            <div className="flex w-32 items-center">
+              <button
+                type="button"
+                className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs text-foreground shadow-sm transition-colors hover:bg-muted"
+                aria-label="Open sidebar"
+                onClick={() => setIsSidebarCollapsed(false)}
+              >
+                <Menu className="size-4" />
+              </button>
+            </div>
             <ModelToggle
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
@@ -507,15 +894,26 @@ export default function Home() {
                 type="button"
                 aria-label="Toggle theme"
                 onClick={() =>
-                  setTheme(
-                    (theme === "system" ? resolvedTheme : theme) === "dark"
-                      ? "light"
-                      : "dark"
-                  )
+                  setTheme(currentTheme === "dark" ? "light" : "dark")
                 }
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs text-foreground shadow-sm transition-colors hover:bg-muted"
               >
-                <Circle className="size-3 fill-foreground/80 text-background" />
+                <span
+                  className={`relative inline-flex h-4 w-4 items-center justify-center ${
+                    isThemeRotating ? "prism-theme-rotate" : ""
+                  }`}
+                >
+                  <Sun
+                    className={`absolute size-4 text-foreground/80 transition-all duration-400 ${
+                      isDarkTheme ? "opacity-0" : "opacity-100"
+                    }`}
+                  />
+                  <Moon
+                    className={`absolute size-4 text-foreground/80 transition-all duration-400 ${
+                      isDarkTheme ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                </span>
               </button>
             </div>
           </header>
@@ -532,21 +930,28 @@ export default function Home() {
               }}
             />
           </main>
+        </div>
 
-          <div className="fixed inset-x-0 bottom-0 z-30">
-            <ChatInput
-              onSend={handleSend}
-              isLoading={isLoading}
-              value={inputValue}
-              onChangeValue={setInputValue}
-              inputRef={inputRef}
-              currentModel={selectedModel}
-              modelsById={modelsById}
-            />
-          </div>
+        {/*
+          ChatInput is fixed but lives in the stable root (no ancestor transform),
+          so it always anchors to the viewport correctly.
+        */}
+        <div className="fixed inset-x-0 bottom-0 z-30">
+          <ChatInput
+            onSend={handleSend}
+            isLoading={isLoading}
+            lastSentMessage={lastSentMessage}
+            value={inputValue}
+            onChangeValue={setInputValue}
+            inputRef={inputRef}
+            currentModel={selectedModel}
+            modelsById={modelsById}
+          />
         </div>
       </div>
-    </>
+      <ToastContainer />
+      </>
+    </ToastProvider>
   );
 }
 

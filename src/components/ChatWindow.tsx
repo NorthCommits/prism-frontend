@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  Children,
-  isValidElement,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   Check,
   ChevronDown,
@@ -29,7 +27,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import {
+  vscDarkPlus,
+  vs,
+} from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useTheme } from "next-themes";
+import { useToast } from "@/components/Toast";
 
 type ChatWindowProps = {
   messages: ChatMessage[];
@@ -67,15 +70,39 @@ function parseContentSegments(text: string): Array<
   return segments;
 }
 
+function spawnRipple(
+  target: HTMLButtonElement,
+  clientX: number,
+  clientY: number
+) {
+  const rect = target.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height) * 2;
+  const x = clientX - rect.left - size / 2;
+  const y = clientY - rect.top - size / 2;
+
+  const ripple = document.createElement("span");
+  ripple.className = "prism-ripple";
+  ripple.style.width = `${size}px`;
+  ripple.style.height = `${size}px`;
+  ripple.style.left = `${x}px`;
+  ripple.style.top = `${y}px`;
+
+  target.appendChild(ripple);
+  window.setTimeout(() => ripple.remove(), 400);
+}
+
 // Icon-only copy control for fenced code headers; shows a checkmark briefly after copy.
 function CopyCodeButton(props: { code: string }) {
   const { code } = props;
   const [copied, setCopied] = useState(false);
+  const { addToast } = useToast();
 
-  const handleCopy = async () => {
+  const handleCopy = async (event: ReactMouseEvent<HTMLButtonElement>) => {
     try {
+      spawnRipple(event.currentTarget, event.clientX, event.clientY);
       await window.navigator.clipboard.writeText(code);
       setCopied(true);
+      addToast("Copied to clipboard", "success");
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       // Ignore clipboard errors.
@@ -87,13 +114,24 @@ function CopyCodeButton(props: { code: string }) {
       type="button"
       onClick={handleCopy}
       title={copied ? "Copied" : "Copy code"}
-      className="inline-flex items-center justify-center rounded p-0.5 text-xs text-muted-foreground transition-colors hover:text-white"
+      className={`relative overflow-hidden inline-flex items-center justify-center rounded p-0.5 text-xs text-muted-foreground transition-colors hover:text-white ${
+        copied ? "prism-copy-flash-bg" : ""
+      }`}
     >
-      {copied ? (
-        <Check className="size-3.5" aria-hidden />
-      ) : (
-        <Copy className="size-3.5" aria-hidden />
-      )}
+      <span className="relative inline-flex size-3.5 items-center justify-center">
+        <Copy
+          className={`absolute inset-0 transition-opacity duration-150 ${
+            copied ? "opacity-0" : "opacity-100"
+          }`}
+          aria-hidden
+        />
+        <Check
+          className={`absolute inset-0 transition-opacity duration-150 ${
+            copied ? "opacity-100" : "opacity-0"
+          }`}
+          aria-hidden
+        />
+      </span>
     </button>
   );
 }
@@ -101,27 +139,44 @@ function CopyCodeButton(props: { code: string }) {
 // Fenced assistant code: Prism theme bar + syntax-highlighted body with scroll cap.
 function MarkdownFencedCode(props: { code: string; language?: string }) {
   const { code, language } = props;
+  const { resolvedTheme } = useTheme();
+  const isDarkMode = resolvedTheme === "dark";
+
   const prismLanguage = language && language.length > 0 ? language : "markup";
   const headerLabel = language && language.length > 0 ? language : "code";
 
+  const codeBackground = isDarkMode ? "#1e1e2e" : "#f6f8fa";
+  const codeText = isDarkMode ? "#e2e8f0" : "#24292e";
+  const headerBorderColor = isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)";
+
   return (
-    <div className="relative mb-3">
-      <div className="flex items-center justify-between rounded-t-lg border-b border-white/10 bg-[#1a1a2e] px-4 py-2">
-        <span className="font-mono text-xs text-muted-foreground">
+    <div className="relative mb-3 overflow-hidden rounded-lg font-mono text-sm">
+      <div
+        className="flex items-center justify-between px-4 py-2"
+        style={{
+          backgroundColor: codeBackground,
+          borderBottom: `1px solid ${headerBorderColor}`,
+        }}
+      >
+        <span className="text-xs" style={{ color: codeText }}>
           {headerLabel}
         </span>
         <CopyCodeButton code={code} />
       </div>
       <SyntaxHighlighter
-        style={oneDark}
+        style={isDarkMode ? vscDarkPlus : vs}
         language={prismLanguage}
         PreTag="div"
         customStyle={{
           margin: 0,
+          padding: "16px",
+          background: codeBackground,
+          color: codeText,
           borderRadius: "0 0 8px 8px",
           fontSize: "13px",
           maxHeight: "400px",
-          overflow: "auto",
+          overflowY: "auto",
+          overflowX: "auto",
         }}
       >
         {code}
@@ -235,38 +290,33 @@ function AssistantMarkdown(props: { content: string }) {
         {children}
       </td>
     ),
-    // Fenced / indented code is always `pre` > `code` in the AST; render the block UI here.
-    pre: ({ children }) => {
-      try {
-        const child = Children.only(children);
-        if (isValidElement(child) && child.type === "code") {
-          const props = child.props as {
-            className?: string;
-            children?: ReactNode;
-          };
-          const codeText = String(props.children ?? "").replace(/\n$/, "");
-          const match = /language-([\w-]+)/.exec(props.className ?? "");
-          return (
-            <MarkdownFencedCode code={codeText} language={match?.[1]} />
-          );
-        }
-      } catch {
-        // Multiple children or empty: fall back to a normal pre.
+    // Let the `code` renderer handle both inline + fenced blocks.
+    // Avoid rendering children directly here to prevent inline styles from bleeding into fenced blocks.
+    pre: ({ children }) => <>{children}</>,
+    code: ({ className, children }) => {
+      const match = /language-(\w+)/.exec(className || "");
+
+      const rawChildren = children ?? "";
+      const codeString = (Array.isArray(rawChildren)
+        ? rawChildren.join("")
+        : String(rawChildren)
+      ).replace(/\n$/, "");
+
+      const language = match ? match[1] : "text";
+      const isFencedBlock = Boolean(match) || codeString.includes("\n");
+
+      if (isFencedBlock) {
+        return <MarkdownFencedCode code={codeString} language={language} />;
       }
+
       return (
-        <pre className="mb-3 max-h-[400px] overflow-y-auto overflow-x-auto rounded-lg bg-[#f4f4f8] p-4 font-mono text-sm dark:bg-[#1a1a2e]">
+        <code
+          className={`rounded-md bg-[rgba(124,58,237,0.1)] px-1.5 py-0.5 font-mono text-sm text-[#7c3aed] dark:text-[#a78bfa] ${className ?? ""}`}
+        >
           {children}
-        </pre>
+        </code>
       );
     },
-    // Inline `code` only (fenced blocks render via `pre` + MarkdownFencedCode).
-    code: ({ className, children }) => (
-      <code
-        className={`rounded bg-purple-500/10 px-1.5 py-0.5 font-mono text-sm text-purple-400 ${className ?? ""}`}
-      >
-        {children}
-      </code>
-    ),
   };
 
   return (
@@ -286,17 +336,60 @@ export function ChatWindow(props: ChatWindowProps) {
     onQuoteReply,
     onSuggestionClick,
   } = props;
+  const { addToast } = useToast();
   // Scroll container ref to keep view pinned to bottom.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const isAtBottomRef = useRef(true);
+  const prevMessageCountRef = useRef(messages.length);
+
+  const handleScrollToBottom = () => {
+    if (!scrollRef.current) return;
+    const el = scrollRef.current;
+    el.scrollTop = el.scrollHeight;
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
+    setUnreadCount(0);
+  };
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && isAtBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      // Consider "at bottom" when within 20px of the bottom.
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const atBottom = remaining < 20;
+      isAtBottomRef.current = atBottom;
+      setIsAtBottom(atBottom);
+      if (atBottom) setUnreadCount(0);
+    };
+
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => {
+      el.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const prev = prevMessageCountRef.current;
+    const next = messages.length;
+    if (next > prev && !isAtBottomRef.current) {
+      setUnreadCount((current) => current + (next - prev));
+    }
+    prevMessageCountRef.current = next;
+  }, [messages.length]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -316,6 +409,17 @@ export function ChatWindow(props: ChatWindowProps) {
     return () => {
       window.removeEventListener("mousedown", handleClickOutside);
     };
+  }, [openMenuIndex]);
+
+  useEffect(() => {
+    if (openMenuIndex === null) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenMenuIndex(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [openMenuIndex]);
 
   const hasMessages = messages.length > 0;
@@ -341,15 +445,22 @@ export function ChatWindow(props: ChatWindowProps) {
         const searchUsed = chatMessage.search_used;
         const searchQuery = chatMessage.search_query;
 
-        const plainText = String((message as any).content ?? "");
+        const plainText = String(message.content ?? "");
+        const isThinking =
+          !isUser &&
+          chatMessage.isStreaming &&
+          plainText.trim().length === 0 &&
+          (chatMessage.response_type === "text" || !chatMessage.response_type);
         const segments = isUser
           ? parseContentSegments(plainText)
           : ([] as ReturnType<typeof parseContentSegments>);
 
-        const handleCopy = async () => {
+        const handleCopy = async (event: ReactMouseEvent<HTMLButtonElement>) => {
           try {
+            spawnRipple(event.currentTarget, event.clientX, event.clientY);
             await window.navigator.clipboard.writeText(plainText);
             setCopiedIndex(index);
+            addToast("Copied to clipboard", "success");
             window.setTimeout(() => {
               setCopiedIndex((current) => (current === index ? null : current));
             }, 2000);
@@ -372,10 +483,12 @@ export function ChatWindow(props: ChatWindowProps) {
         return (
           <div
             key={index}
-            className={`group flex w-full flex-col gap-1.5 ${alignClass} animate-in fade-in-0 slide-in-from-bottom-1`}
+            className={`group flex w-full flex-col gap-1.5 ${alignClass} ${
+              isUser ? "prism-anim-user-message" : "prism-anim-assistant-message"
+            }`}
           >
             {!isUser && (
-              <div className="flex items-center text-[11px] text-muted-foreground">
+              <div className="flex items-center prism-label-anim text-[9px] font-semibold tracking-[0.2em] text-muted-foreground/60">
                 <span
                   style={{
                     background:
@@ -388,9 +501,7 @@ export function ChatWindow(props: ChatWindowProps) {
                   }}
                   aria-hidden
                 />
-                <span className="font-medium uppercase tracking-wide">
-                  Prism
-                </span>
+                <span className="uppercase">PRISM</span>
               </div>
             )}
             <div className="flex flex-col items-start gap-1.5">
@@ -459,16 +570,27 @@ export function ChatWindow(props: ChatWindowProps) {
                             <span>Code</span>
                             <button
                               type="button"
-                              onClick={async () => {
+                              onClick={async (
+                                event: ReactMouseEvent<HTMLButtonElement>
+                              ) => {
                                 try {
+                                  spawnRipple(
+                                    event.currentTarget,
+                                    event.clientX,
+                                    event.clientY
+                                  );
                                   await window.navigator.clipboard.writeText(
                                     segment.value
+                                  );
+                                  addToast(
+                                    "Copied to clipboard",
+                                    "success"
                                   );
                                 } catch {
                                   // Ignore clipboard errors for now.
                                 }
                               }}
-                              className="inline-flex items-center gap-1 rounded border border-transparent px-2 py-0.5 text-[11px] transition-colors hover:border-border hover:bg-background/80"
+                              className="relative overflow-hidden inline-flex items-center gap-1 rounded border border-transparent px-2 py-0.5 text-[11px] transition-colors hover:border-border hover:bg-background/80"
                             >
                               <Copy className="size-[12px]" />
                               <span>Copy code</span>
@@ -482,12 +604,36 @@ export function ChatWindow(props: ChatWindowProps) {
                     )}
                   </>
                 ) : (
-                  <AssistantMarkdown content={plainText} />
+                  <>
+                    <div className="relative min-h-[16px]">
+                      <div
+                        className={`transition-opacity duration-200 prism-thinking-shimmer ${
+                          isThinking ? "opacity-100" : "opacity-0"
+                        }`}
+                        style={{ position: "absolute", left: 0, top: 0 }}
+                        aria-hidden
+                      />
+                      <div
+                        className={`transition-opacity duration-200 ${
+                          isThinking ? "opacity-0" : "opacity-100"
+                        }`}
+                      >
+                        <AssistantMarkdown content={plainText} />
+                      </div>
+                    </div>
+                    {chatMessage.isStreaming &&
+                      !isThinking &&
+                      (chatMessage.response_type === "text" ||
+                        !chatMessage.response_type) &&
+                      plainText.trim().length > 0 && (
+                        <span className="inline-block w-0.5 h-4 bg-current ml-0.5 animate-pulse" />
+                      )}
+                  </>
                 )}
               </div>
 
               {!isUser && baseModelId === "auto" && routedTo && (
-                <div className="inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[#7c3aed]/10 bg-gradient-to-r from-[#7c3aed]/[0.06] to-[#2563eb]/[0.06] px-2 py-1 text-xs leading-snug text-muted-foreground dark:border-[#7c3aed]/15 dark:from-[#7c3aed]/[0.08] dark:to-[#2563eb]/[0.08]">
+                <div className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[#7c3aed]/10 bg-gradient-to-r from-[#7c3aed]/[0.06] to-[#2563eb]/[0.06] px-2 py-1 text-xs leading-snug text-muted-foreground dark:border-[#7c3aed]/15 dark:from-[#7c3aed]/[0.08] dark:to-[#2563eb]/[0.08]">
                   <span
                     className="mt-px shrink-0 text-[12px] leading-none text-muted-foreground"
                     aria-hidden
@@ -521,13 +667,24 @@ export function ChatWindow(props: ChatWindowProps) {
                       type="button"
                       onClick={handleCopy}
                       title="Copy"
-                      className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-muted/70"
+                      className={`relative overflow-hidden inline-flex items-center justify-center rounded-full border border-transparent bg-transparent px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-muted/70 ${
+                        copiedIndex === index ? "prism-copy-flash-bg" : ""
+                      }`}
                     >
-                      {copiedIndex === index ? (
-                        <Check className="size-[14px]" />
-                      ) : (
-                        <Copy className="size-[14px]" />
-                      )}
+                      <span className="relative inline-flex size-[14px] items-center justify-center">
+                        <Copy
+                          className={`absolute inset-0 transition-opacity duration-150 ${
+                            copiedIndex === index ? "opacity-0" : "opacity-100"
+                          }`}
+                          aria-hidden
+                        />
+                        <Check
+                          className={`absolute inset-0 transition-opacity duration-150 ${
+                            copiedIndex === index ? "opacity-100" : "opacity-0"
+                          }`}
+                          aria-hidden
+                        />
+                      </span>
                     </button>
                     <div className="relative">
                       <button
@@ -563,21 +720,21 @@ export function ChatWindow(props: ChatWindowProps) {
           </div>
         );
       }),
-    [messages, modelsById]
+    [messages, modelsById, copiedIndex, onQuoteReply, openMenuIndex, addToast]
   );
 
   return (
     <section
       ref={scrollRef}
-      className="flex-1 overflow-y-auto px-8 pt-8 pb-48 transition-colors duration-200"
+      className="relative flex-1 overflow-y-auto px-8 pt-8 pb-48 transition-colors duration-200"
     >
       {!hasMessages ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
           <div className="space-y-4">
-            <h1 className="bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] bg-clip-text text-4xl font-semibold tracking-tight text-transparent sm:text-5xl">
+            <h1 className="prism-empty-float bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] bg-clip-text text-4xl font-semibold tracking-tight text-transparent sm:text-5xl">
               Prism
             </h1>
-            <p className="text-base text-foreground/80">
+            <p className="prism-empty-tagline text-base text-foreground/80">
               The right model. Every time.
             </p>
             <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
@@ -589,7 +746,8 @@ export function ChatWindow(props: ChatWindowProps) {
                     "Write a Python implementation of binary search."
                   )
                 }
-                className="inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/60 px-4 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[#f5f3ff] dark:hover:bg-[#1f1633]"
+                className="prism-empty-suggestion-chip prism-empty-suggestion-chip-appear inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/60 px-4 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[#f5f3ff] dark:hover:bg-[#1f1633] transition-transform hover:scale-[1.03] active:scale-[0.97]"
+                style={{ animationDelay: "0ms" }}
               >
                 <Code2 className="size-4 text-[#7c3aed]" />
                 <span>Write a Python binary search</span>
@@ -602,7 +760,8 @@ export function ChatWindow(props: ChatWindowProps) {
                     "Draft a friendly LinkedIn post about our new product launch."
                   )
                 }
-                className="inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/60 px-4 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[#f5f3ff] dark:hover:bg-[#1f1633]"
+                className="prism-empty-suggestion-chip prism-empty-suggestion-chip-appear inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/60 px-4 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[#f5f3ff] dark:hover:bg-[#1f1633] transition-transform hover:scale-[1.03] active:scale-[0.97]"
+                style={{ animationDelay: "100ms" }}
               >
                 <PenLine className="size-4 text-[#7c3aed]" />
                 <span>Draft a LinkedIn post</span>
@@ -613,7 +772,8 @@ export function ChatWindow(props: ChatWindowProps) {
                   onSuggestionClick &&
                   onSuggestionClick("What is new in React 19?")
                 }
-                className="inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/60 px-4 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[#f5f3ff] dark:hover:bg-[#1f1633]"
+                className="prism-empty-suggestion-chip prism-empty-suggestion-chip-appear inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/60 px-4 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-[#f5f3ff] dark:hover:bg-[#1f1633] transition-transform hover:scale-[1.03] active:scale-[0.97]"
+                style={{ animationDelay: "200ms" }}
               >
                 <Globe className="size-4 text-[#7c3aed]" />
                 <span>What&apos;s new in React 19?</span>
@@ -624,41 +784,23 @@ export function ChatWindow(props: ChatWindowProps) {
       ) : (
         <div className="mx-auto flex w-full max-w-[768px] flex-col gap-6">
           {renderedMessages}
-          {isLoading && (
-            <div className="flex w-full flex-col gap-1.5 items-start animate-in fade-in duration-300">
-              <div className="flex items-center text-[11px] text-muted-foreground">
-                <span
-                  style={{
-                    background:
-                      "linear-gradient(135deg, #7c3aed, #2563eb, #06b6d4)",
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    display: "inline-block",
-                    marginRight: "6px",
-                  }}
-                  aria-hidden
-                />
-                <span className="font-medium uppercase tracking-wide">
-                  Prism
-                </span>
-              </div>
-              <div className="flex max-w-[78%] items-center gap-1.5 rounded-2xl px-5 py-3.5">
-                <span
-                  className="typing-dot-animate size-2 shrink-0 rounded-full bg-[#7c3aed]"
-                  aria-hidden
-                />
-                <span
-                  className="typing-dot-animate typing-dot-delay-1 size-2 shrink-0 rounded-full bg-[#2563eb]"
-                  aria-hidden
-                />
-                <span
-                  className="typing-dot-animate typing-dot-delay-2 size-2 shrink-0 rounded-full bg-[#06b6d4]"
-                  aria-hidden
-                />
-              </div>
-            </div>
-          )}
+        </div>
+      )}
+
+      {unreadCount > 0 && !isAtBottom && (
+        <div className="absolute bottom-20 right-8 z-10">
+          <button
+            type="button"
+            onClick={handleScrollToBottom}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] text-white shadow-lg transition-opacity duration-200"
+            aria-label="Scroll to bottom"
+            title="Scroll to bottom"
+          >
+            <ChevronDown className="size-4 -mb-[1px]" />
+          </button>
+          <div className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-background px-1 text-[10px] font-semibold text-foreground shadow">
+            {unreadCount}
+          </div>
         </div>
       )}
     </section>
