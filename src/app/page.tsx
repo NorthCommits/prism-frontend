@@ -23,6 +23,7 @@ import {
   fetchModels,
   sendMessageStream,
 } from "../lib/api";
+import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatWindow } from "@/components/ChatWindow";
 import { ModelToggle } from "@/components/ModelToggle";
@@ -83,6 +84,12 @@ export default function Home() {
   const [isSplashWarping, setIsSplashWarping] = useState(false);
   const [isChatWarpingIn, setIsChatWarpingIn] = useState(false);
   const [isChatShaking, setIsChatShaking] = useState(false);
+  // Agent-mode progress state — reset on every new message send.
+  const [isAgentMode, setIsAgentMode] = useState(false);
+  const [agentSteps, setAgentSteps] = useState<string[]>([]);
+  const [agentCurrentStep, setAgentCurrentStep] = useState(0);
+  const [agentCompletedSteps, setAgentCompletedSteps] = useState<number[]>([]);
+  const [agentComplete, setAgentComplete] = useState(false);
   // Track whether the splash overlay should exist in the DOM at all.
   // Always starts as true so the server and first client render match (no
   // hydration mismatch). A one-time effect immediately hides it on the client
@@ -437,6 +444,13 @@ export default function Home() {
       return;
     }
 
+    // Reset agent progress from any previous turn.
+    setIsAgentMode(false);
+    setAgentSteps([]);
+    setAgentCurrentStep(0);
+    setAgentCompletedSteps([]);
+    setAgentComplete(false);
+
     setLastSentMessage(message);
 
     const userMessage: ChatMessage = {
@@ -520,6 +534,8 @@ export default function Home() {
           search_used?: boolean;
           search_query?: string;
           image_used?: boolean;
+          is_agent?: boolean;
+          agent_step_count?: number;
           response_type?: "text" | "plot" | "image";
           plot_json?: object;
           image_url?: string;
@@ -553,6 +569,8 @@ export default function Home() {
                 search_used: metadata.search_used,
                 search_query: metadata.search_query,
                 image_used: metadata.image_used,
+                is_agent: metadata.is_agent,
+                agent_step_count: metadata.agent_step_count,
                 response_type: metadata.response_type,
                 plot_json: metadata.plot_json,
                 image_url: metadata.image_url,
@@ -618,7 +636,26 @@ export default function Home() {
         user?.id,
         // Vision: base64 image for this turn only (not stored in history).
         image?.base64,
-        image?.mediaType
+        image?.mediaType,
+        // Agent-mode progress callbacks.
+        (steps, total) => {
+          setIsAgentMode(true);
+          setAgentSteps(steps);
+          setAgentCurrentStep(0);
+          setAgentCompletedSteps([]);
+          setAgentComplete(false);
+          // Store total in metadata so the badge can show step count.
+          if (total) {
+            void total; // used via steps.length
+          }
+        },
+        (step) => {
+          setAgentCurrentStep(step);
+        },
+        (step, total) => {
+          setAgentCompletedSteps((prev) => [...prev, step]);
+          if (step === total) setAgentComplete(true);
+        }
       );
     } catch {
       pushToast("Something went wrong", "error");
@@ -950,6 +987,14 @@ export default function Home() {
           </header>
 
           <main className="flex min-h-0 flex-1 flex-col">
+            {isAgentMode && (
+              <AgentProgress
+                steps={agentSteps}
+                currentStep={agentCurrentStep}
+                completedSteps={agentCompletedSteps}
+                isComplete={agentComplete}
+              />
+            )}
             <ChatWindow
               messages={messages}
               modelsById={modelsById}

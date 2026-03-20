@@ -23,6 +23,9 @@ export interface ChatMessage {
   image_base64?: string;
   image_media_type?: string;
   image_used?: boolean;
+  // Set to true when the response was produced by the multi-step agent.
+  is_agent?: boolean;
+  agent_step_count?: number;
 }
 
 export interface ChatResponse {
@@ -34,6 +37,8 @@ export interface ChatResponse {
   search_used?: boolean;
   search_query?: string;
   image_used?: boolean;
+  is_agent?: boolean;
+  agent_step_count?: number;
   response_type?: "text" | "plot" | "image";
   plot_json?: object;
   image_url?: string;
@@ -140,7 +145,11 @@ export async function sendMessageStream(
   user_id?: string,
   // Base64-encoded image for vision requests (not stored in conversation history).
   image_base64?: string,
-  image_media_type?: string
+  image_media_type?: string,
+  // Optional agent-mode progress callbacks.
+  onAgentPlan?: (steps: string[], total: number) => void,
+  onAgentStepStart?: (step: number, total: number, title: string) => void,
+  onAgentStepDone?: (step: number, total: number) => void
 ): Promise<void> {
   try {
     const response = await fetch(`${API_URL}/api/v1/chat`, {
@@ -215,14 +224,38 @@ export async function sendMessageStream(
             type: string;
             content?: string;
             message?: string;
+            steps?: string[];
+            step?: number;
+            total?: number;
+            title?: string;
             [key: string]: unknown;
           };
 
-          if (event.type === "metadata") onMetadata(event as Partial<ChatResponse>);
-          else if (event.type === "token") {
+          if (event.type === "metadata") {
+            onMetadata(event as Partial<ChatResponse>);
+          } else if (event.type === "token") {
             if (typeof event.content === "string") onToken(event.content);
-          } else if (event.type === "done") onDone();
-          else if (event.type === "error") onError(event.message || "Something went wrong");
+          } else if (event.type === "done") {
+            onDone();
+          } else if (event.type === "error") {
+            onError(event.message || "Something went wrong");
+          } else if (event.type === "agent_plan") {
+            onAgentPlan?.(
+              Array.isArray(event.steps) ? (event.steps as string[]) : [],
+              typeof event.total === "number" ? event.total : 0
+            );
+          } else if (event.type === "agent_step_start") {
+            onAgentStepStart?.(
+              typeof event.step === "number" ? event.step : 0,
+              typeof event.total === "number" ? event.total : 0,
+              typeof event.title === "string" ? event.title : ""
+            );
+          } else if (event.type === "agent_step_done") {
+            onAgentStepDone?.(
+              typeof event.step === "number" ? event.step : 0,
+              typeof event.total === "number" ? event.total : 0
+            );
+          }
         } catch {
           // Ignore malformed JSON lines.
         }
@@ -238,14 +271,38 @@ export async function sendMessageStream(
             type: string;
             content?: string;
             message?: string;
+            steps?: string[];
+            step?: number;
+            total?: number;
+            title?: string;
             [key: string]: unknown;
           };
 
-          if (event.type === "metadata") onMetadata(event as Partial<ChatResponse>);
-          else if (event.type === "token") {
+          if (event.type === "metadata") {
+            onMetadata(event as Partial<ChatResponse>);
+          } else if (event.type === "token") {
             if (typeof event.content === "string") onToken(event.content);
-          } else if (event.type === "done") onDone();
-          else if (event.type === "error") onError(event.message || "Something went wrong");
+          } else if (event.type === "done") {
+            onDone();
+          } else if (event.type === "error") {
+            onError(event.message || "Something went wrong");
+          } else if (event.type === "agent_plan") {
+            onAgentPlan?.(
+              Array.isArray(event.steps) ? (event.steps as string[]) : [],
+              typeof event.total === "number" ? event.total : 0
+            );
+          } else if (event.type === "agent_step_start") {
+            onAgentStepStart?.(
+              typeof event.step === "number" ? event.step : 0,
+              typeof event.total === "number" ? event.total : 0,
+              typeof event.title === "string" ? event.title : ""
+            );
+          } else if (event.type === "agent_step_done") {
+            onAgentStepDone?.(
+              typeof event.step === "number" ? event.step : 0,
+              typeof event.total === "number" ? event.total : 0
+            );
+          }
         } catch {
           // Ignore malformed JSON lines.
         }

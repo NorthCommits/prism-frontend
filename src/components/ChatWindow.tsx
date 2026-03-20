@@ -19,6 +19,7 @@ import {
   FileSpreadsheet,
   FileCode,
   FileText,
+  Zap,
 } from "lucide-react";
 
 import type { AvailableModel, ChatMessage, ModelId } from "../lib/api";
@@ -240,8 +241,14 @@ function AssistantMarkdown(props: { content: string }) {
         {children}
       </blockquote>
     ),
-    hr: ({ ...rest }) => (
-      <hr className="mt-4 mb-4 border-border" {...rest} />
+    hr: () => (
+      <div className="my-5 flex items-center gap-3" aria-hidden>
+        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#7c3aed]/40 to-transparent" />
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#2563eb] opacity-60">
+          <Zap className="size-2.5 text-white" />
+        </span>
+        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2563eb]/40 to-transparent" />
+      </div>
     ),
     a: ({ children, href, ...rest }) => (
       <a
@@ -676,6 +683,18 @@ export function ChatWindow(props: ChatWindowProps) {
                 <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full bg-violet-950/5 px-3 py-1.5 text-[11px] leading-snug text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
                   <Eye className="size-3 shrink-0" />
                   <span>Vision · Analyzed with GPT-4o</span>
+                </div>
+              )}
+
+              {!isUser && chatMessage.is_agent && (
+                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[#7c3aed]/15 bg-gradient-to-r from-[#7c3aed]/10 to-[#2563eb]/10 px-3 py-1.5 text-[11px] leading-snug text-[#7c3aed] dark:text-[#c4b5fd]">
+                  <Zap className="size-3 shrink-0" />
+                  <span>
+                    Agent Mode
+                    {chatMessage.agent_step_count
+                      ? ` · ${chatMessage.agent_step_count} steps`
+                      : ""}
+                  </span>
                 </div>
               )}
 
