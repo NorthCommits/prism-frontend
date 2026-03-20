@@ -19,6 +19,10 @@ export interface ChatMessage {
   response_type?: "text" | "plot" | "image";
   plot_json?: object;
   image_url?: string;
+  // User-uploaded image sent with this message (not persisted in history).
+  image_base64?: string;
+  image_media_type?: string;
+  image_used?: boolean;
 }
 
 export interface ChatResponse {
@@ -29,6 +33,7 @@ export interface ChatResponse {
   routing_reason?: string;
   search_used?: boolean;
   search_query?: string;
+  image_used?: boolean;
   response_type?: "text" | "plot" | "image";
   plot_json?: object;
   image_url?: string;
@@ -43,6 +48,9 @@ export interface ParsedFile {
 export interface HistoryMessage {
   role: "user" | "assistant";
   content: string;
+  // Which specialist model handled this turn — used by the backend for
+  // context compression to add model-switch notes between turns.
+  model_id?: string;
 }
 
 export interface AvailableModel {
@@ -69,7 +77,10 @@ export async function sendMessage(
   file_name?: string,
   file_type?: string,
   file_content?: string,
-  conversation_history?: HistoryMessage[]
+  conversation_history?: HistoryMessage[],
+  user_id?: string,
+  image_base64?: string,
+  image_media_type?: string
 ): Promise<ChatResponse> {
   // Backward-compatible wrapper around the streaming endpoint.
   return await new Promise<ChatResponse>((resolve, reject) => {
@@ -95,6 +106,7 @@ export async function sendMessage(
           routing_reason: latestMetadata.routing_reason,
           search_used: latestMetadata.search_used,
           search_query: latestMetadata.search_query,
+          image_used: latestMetadata.image_used,
           response_type: latestMetadata.response_type ?? "text",
           plot_json: latestMetadata.plot_json,
           image_url: latestMetadata.image_url,
@@ -105,7 +117,10 @@ export async function sendMessage(
       },
       file_name,
       file_type,
-      file_content
+      file_content,
+      user_id,
+      image_base64,
+      image_media_type
     ).catch(reject);
   });
 }
@@ -120,7 +135,12 @@ export async function sendMessageStream(
   onError: (error: string) => void,
   file_name?: string,
   file_type?: string,
-  file_content?: string
+  file_content?: string,
+  // Passed to the backend so it can inject the user's custom instructions.
+  user_id?: string,
+  // Base64-encoded image for vision requests (not stored in conversation history).
+  image_base64?: string,
+  image_media_type?: string
 ): Promise<void> {
   try {
     const response = await fetch(`${API_URL}/api/v1/chat`, {
@@ -133,6 +153,9 @@ export async function sendMessageStream(
         file_name,
         file_type,
         file_content,
+        user_id,
+        image_base64,
+        image_media_type,
       }),
     });
 

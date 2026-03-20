@@ -11,6 +11,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Eye,
   Globe,
   Quote,
   Code2,
@@ -512,6 +513,17 @@ export function ChatWindow(props: ChatWindowProps) {
                   isUser ? `${bubbleClass} shadow-sm` : "bg-transparent text-foreground"
                 }`}
               >
+                {/* Inline image for user messages that had an image attached.
+                    data: URIs cannot be optimised by next/image. */}
+                {isUser && chatMessage.image_base64 && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`data:${chatMessage.image_media_type ?? "image/jpeg"};base64,${chatMessage.image_base64}`}
+                    alt="Uploaded image"
+                    className="mb-2 max-w-[300px] rounded-xl object-contain"
+                  />
+                )}
+
                 {isUser && chatMessage.file_name && (
                   <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-[#f5f3ff] px-3 py-1 text-[11px] text-foreground dark:bg-[#1f1633]">
                     {(() => {
@@ -657,6 +669,13 @@ export function ChatWindow(props: ChatWindowProps) {
                     Web search
                     {searchQuery ? ` · ${searchQuery}` : ""}
                   </span>
+                </div>
+              )}
+
+              {!isUser && chatMessage.image_used && (
+                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full bg-violet-950/5 px-3 py-1.5 text-[11px] leading-snug text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                  <Eye className="size-3 shrink-0" />
+                  <span>Vision · Analyzed with GPT-4o</span>
                 </div>
               )}
 

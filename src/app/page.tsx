@@ -10,6 +10,7 @@ import {
   Trash2,
   PanelLeftClose,
   LogOut,
+  UserCircle,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -51,7 +52,7 @@ function formatRelativeTime(isoDate: string): string {
 }
 
 export default function Home() {
-  type UserLike = { email?: string | null };
+  type UserLike = { id?: string; email?: string | null };
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [modelsById, setModelsById] = useState<
     Record<ModelId, AvailableModel>
@@ -98,10 +99,15 @@ export default function Home() {
   const currentTheme = theme === "system" ? resolvedTheme : theme;
   const isDarkTheme = currentTheme === "dark";
   const [isThemeRotating, setIsThemeRotating] = useState(false);
+  // Stays false on the server and on the first client render so that the
+  // Sun/Moon opacity classes match the server-rendered HTML. Set to true
+  // on the first effect run (after hydration) so the real theme icons appear.
+  const [isThemeMounted, setIsThemeMounted] = useState(false);
   const didMountThemeRef = useRef(false);
   useEffect(() => {
     if (!didMountThemeRef.current) {
       didMountThemeRef.current = true;
+      setIsThemeMounted(true);
       return;
     }
     setIsThemeRotating(true);
@@ -424,7 +430,8 @@ export default function Home() {
 
   const handleSend = async (
     message: string,
-    file?: { file_name: string; file_type: string; file_content: string }
+    file?: { file_name: string; file_type: string; file_content: string },
+    image?: { base64: string; mediaType: string }
   ) => {
     if (!selectedModel) {
       return;
@@ -434,13 +441,16 @@ export default function Home() {
 
     const userMessage: ChatMessage = {
       role: "user",
-      // Casting for compatibility with the existing API message shape.
       content: message,
       file_used: !!file,
       file_name: file?.file_name,
       file_type: file?.file_type,
       file_content: file?.file_content,
-    } as ChatMessage;
+      // Stored in message state for inline display; excluded from history.
+      image_base64: image?.base64,
+      image_media_type: image?.mediaType,
+      image_used: !!image,
+    };
 
     let conversationId = activeConversationId;
 
@@ -482,9 +492,12 @@ export default function Home() {
       // Ignore message save failure for user message.
     }
 
+    // Include model_id so the backend context-compression layer can annotate
+    // model-switch boundaries (e.g. coding → writing) between turns.
     const history: HistoryMessage[] = messages.map((item) => ({
       role: item.role,
       content: String(item.content),
+      model_id: item.model_id || item.routed_to || undefined,
     }));
 
     // Create a placeholder assistant message and stream the response into it.
@@ -506,6 +519,7 @@ export default function Home() {
           routing_reason?: string;
           search_used?: boolean;
           search_query?: string;
+          image_used?: boolean;
           response_type?: "text" | "plot" | "image";
           plot_json?: object;
           image_url?: string;
@@ -538,6 +552,7 @@ export default function Home() {
                 routing_reason: metadata.routing_reason,
                 search_used: metadata.search_used,
                 search_query: metadata.search_query,
+                image_used: metadata.image_used,
                 response_type: metadata.response_type,
                 plot_json: metadata.plot_json,
                 image_url: metadata.image_url,
@@ -598,7 +613,12 @@ export default function Home() {
         },
         file?.file_name,
         file?.file_type,
-        file?.file_content
+        file?.file_content,
+        // Let the backend inject this user's custom profile instructions.
+        user?.id,
+        // Vision: base64 image for this turn only (not stored in history).
+        image?.base64,
+        image?.mediaType
       );
     } catch {
       pushToast("Something went wrong", "error");
@@ -806,17 +826,28 @@ export default function Home() {
                         {user?.email ?? "Signed in"}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-muted"
-                      aria-label="Sign out"
-                      onClick={async () => {
-                        await supabase.auth.signOut();
-                        router.push("/login");
-                      }}
-                    >
-                      <LogOut className="size-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label="Profile Settings"
+                        title="Profile Settings"
+                        onClick={() => router.push("/profile")}
+                      >
+                        <UserCircle className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label="Sign out"
+                        onClick={async () => {
+                          await supabase.auth.signOut();
+                          router.push("/login");
+                        }}
+                      >
+                        <LogOut className="size-3.5" />
+                      </button>
+                    </div>
                   </div>
                   <div className="text-[10px]">Prism v0.1.0 beta</div>
                 </div>
@@ -905,12 +936,12 @@ export default function Home() {
                 >
                   <Sun
                     className={`absolute size-4 text-foreground/80 transition-all duration-400 ${
-                      isDarkTheme ? "opacity-0" : "opacity-100"
+                      isThemeMounted && isDarkTheme ? "opacity-0" : "opacity-100"
                     }`}
                   />
                   <Moon
                     className={`absolute size-4 text-foreground/80 transition-all duration-400 ${
-                      isDarkTheme ? "opacity-100" : "opacity-0"
+                      isThemeMounted && isDarkTheme ? "opacity-100" : "opacity-0"
                     }`}
                   />
                 </span>

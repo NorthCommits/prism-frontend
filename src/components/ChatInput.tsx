@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ArrowUpRight,
+  ImageIcon,
   Paperclip,
   X,
   FileText,
@@ -25,10 +26,19 @@ type AttachedFile = ParsedFile & {
   status: "idle" | "parsing" | "error";
 };
 
+type AttachedImage = {
+  base64: string;
+  mediaType: string;
+  // Full data-URL used as the thumbnail src; not sent to the API.
+  preview: string;
+  name: string;
+};
+
 type ChatInputProps = {
   onSend: (
     message: string,
-    file?: { file_name: string; file_type: string; file_content: string }
+    file?: { file_name: string; file_type: string; file_content: string },
+    image?: { base64: string; mediaType: string }
   ) => void;
   isLoading: boolean;
   /** Last sent user message for ArrowUp history navigation. */
@@ -52,7 +62,9 @@ export function ChatInput({
   const internalRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? internalRef;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
+  const [attachedImage, setAttachedImage] = useState<AttachedImage | null>(null);
   const { addToast } = useToast();
   const [historyNavActive, setHistoryNavActive] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
@@ -95,16 +107,25 @@ export function ChatInput({
       window.setTimeout(() => setIsInputShaking(false), 450);
       return;
     }
+    const imagePayload = attachedImage
+      ? { base64: attachedImage.base64, mediaType: attachedImage.mediaType }
+      : undefined;
+
     if (attachedFile && attachedFile.status === "idle") {
-      onSend(trimmed, {
-        file_name: attachedFile.file_name,
-        file_type: attachedFile.file_type,
-        file_content: attachedFile.content,
-      });
+      onSend(
+        trimmed,
+        {
+          file_name: attachedFile.file_name,
+          file_type: attachedFile.file_type,
+          file_content: attachedFile.content,
+        },
+        imagePayload
+      );
       setAttachedFile(null);
     } else {
-      onSend(trimmed);
+      onSend(trimmed, undefined, imagePayload);
     }
+    setAttachedImage(null);
     onChangeValue("");
   };
 
@@ -177,6 +198,42 @@ export function ChatInput({
     setAttachedFile(null);
   };
 
+  const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
+
+  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_IMAGE_BYTES) {
+      addToast("Image must be under 5 MB", "error");
+      if (event.target) event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      // Split "data:<mediaType>;base64,<base64data>" to extract parts.
+      const [header, base64] = dataUrl.split(",");
+      const mediaType = header.replace("data:", "").replace(";base64", "");
+      setAttachedImage({
+        base64,
+        mediaType,
+        preview: dataUrl,
+        name: file.name,
+      });
+      addToast(`Image ready · ${file.name}`, "info");
+    };
+    reader.readAsDataURL(file);
+
+    // Allow re-selecting the same file.
+    if (event.target) event.target.value = "";
+  };
+
+  const handleRemoveImage = () => {
+    setAttachedImage(null);
+  };
+
   const renderFileIcon = (fileName?: string) => {
     if (!fileName) return <FileText className="size-3.5" />;
     const lower = fileName.toLowerCase();
@@ -200,6 +257,38 @@ export function ChatInput({
     >
       <div className="mx-auto flex w-full max-w-2xl items-end gap-2.5 px-4 py-4">
         <div className="flex-1 rounded-2xl border bg-card/95 px-3.5 py-2.5 shadow-lg">
+          {/* Image preview chip */}
+          {attachedImage && (
+            <div className="mb-2 prism-file-chip-appear inline-flex w-full items-center justify-between gap-2 rounded-xl border border-[#7c3aed33] bg-[#f5f3ff] px-2 py-1.5 text-[11px] text-foreground dark:bg-[#1f1633]">
+              <div className="flex min-w-0 items-center gap-2">
+                {/* Thumbnail — data: URI; next/image cannot optimise these */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={attachedImage.preview}
+                  alt="Preview"
+                  className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                />
+                <div className="min-w-0">
+                  <p className="truncate font-medium">
+                    {attachedImage.name.length > 20
+                      ? `${attachedImage.name.slice(0, 20)}…`
+                      : attachedImage.name}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">Image attached</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleRemoveImage}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:border-border hover:bg-background"
+                aria-label="Remove image"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Document / file chip */}
           {attachedFile && (
             <div
               className={`mb-2 prism-file-chip-appear inline-flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-1.5 text-[11px] ${
@@ -252,6 +341,21 @@ export function ChatInput({
               className="hidden"
               accept=".txt,.md,.py,.js,.ts,.jsx,.tsx,.csv,.xlsx"
               onChange={handleFileChange}
+            />
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:border-border hover:bg-background/60"
+              aria-label="Attach image"
+            >
+              <ImageIcon className="size-4" />
+            </button>
+            <input
+              ref={imageInputRef}
+              type="file"
+              className="hidden"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+              onChange={handleImageChange}
             />
           <textarea
             ref={textareaRef}
