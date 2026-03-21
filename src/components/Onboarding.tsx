@@ -98,11 +98,13 @@ function ProgressBar({ step }: { step: number }) {
             <div className="h-px w-10 overflow-hidden" style={{ background: "rgba(255,255,255,0.1)" }}>
               <motion.div
                 className="h-full"
-                style={{ background: "linear-gradient(to right, #8b5cf6, #06b6d4)" }}
+                style={{
+                  background: "linear-gradient(to right, #8b5cf6, #06b6d4)",
+                  transformOrigin: "left center",
+                }}
                 initial={{ scaleX: 0 }}
                 animate={{ scaleX: step > s ? 1 : 0 }}
                 transition={{ duration: 0.4 }}
-                style2={{ transformOrigin: "left center" }}
               />
             </div>
           )}
