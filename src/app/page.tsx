@@ -311,7 +311,7 @@ export default function Home() {
       } = await supabase.auth.getSession();
       if (isCancelled) return;
       if (!session) {
-        router.push("/login");
+        router.push("/landing");
         return;
       }
       setUser(session.user as UserLike);
@@ -323,7 +323,7 @@ export default function Home() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!session) {
         setUser(null);
-        router.push("/login");
+        router.push("/landing");
       } else {
         setUser(session.user as UserLike);
 
@@ -1320,7 +1320,7 @@ export default function Home() {
                         onClick={async () => {
                           setIsProfileOpen(false);
                           await supabase.auth.signOut();
-                          router.push("/login");
+                          router.push("/landing");
                         }}
                         className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] text-red-500 transition-colors hover:bg-red-500/10"
                       >
