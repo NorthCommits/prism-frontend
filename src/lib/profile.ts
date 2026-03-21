@@ -64,6 +64,24 @@ export async function getMemories(): Promise<Memory[]> {
   return response.json();
 }
 
+// Marks onboarding as complete for the current user.
+export async function completeOnboarding(): Promise<void> {
+  const headers = await getAuthHeader();
+  await fetch(`${API_URL}/api/v1/profile/complete-onboarding`, {
+    method: "POST",
+    headers,
+  });
+}
+
+// Returns true if the user has already completed onboarding.
+export async function checkOnboardingStatus(): Promise<boolean> {
+  const headers = await getAuthHeader();
+  const response = await fetch(`${API_URL}/api/v1/profile`, { headers });
+  if (!response.ok) return false;
+  const profile = await response.json();
+  return profile.onboarding_completed === true;
+}
+
 export async function deleteMemory(id: string): Promise<void> {
   const headers = await getAuthHeader();
   await fetch(`${API_URL}/api/v1/memories/${id}`, {

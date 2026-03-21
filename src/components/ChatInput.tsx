@@ -14,6 +14,7 @@ import {
   FileCode,
   FileSpreadsheet,
   FileText,
+  FolderOpen,
   ImageIcon,
   LucideProps,
   Lightbulb,
@@ -22,6 +23,8 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { ProjectPicker } from "@/components/ProjectPicker";
+import type { Project } from "@/lib/projects";
 
 // Maps the icon name strings returned by the backend to Lucide components.
 const ICON_MAP: Record<string, React.ComponentType<LucideProps>> = {
@@ -67,6 +70,9 @@ type ChatInputProps = {
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   currentModel: ModelId | null;
   modelsById?: Record<ModelId, AvailableModel>;
+  /** Currently linked project — null means no project linked. */
+  activeProject?: Project | null;
+  onActiveProjectChange?: (project: Project | null) => void;
 };
 
 export function ChatInput({
@@ -77,6 +83,8 @@ export function ChatInput({
   onChangeValue,
   inputRef,
   currentModel,
+  activeProject,
+  onActiveProjectChange,
 }: ChatInputProps) {
   const internalRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? internalRef;
@@ -86,6 +94,9 @@ export function ChatInput({
 
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [attachedImage, setAttachedImage] = useState<AttachedImage | null>(null);
+
+  // Project picker popup visibility.
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
 
   // Prompt template state
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -494,6 +505,29 @@ export function ChatInput({
             </div>
           )}
 
+          {/* Active project chip */}
+          {activeProject && (
+            <div className="mb-2 prism-file-chip-appear inline-flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-1.5 text-[11px] text-foreground"
+              style={{ borderColor: `${activeProject.color}33`, background: `${activeProject.color}11` }}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: activeProject.color }} />
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{activeProject.name}</p>
+                  <p className="text-[10px] text-muted-foreground">Project context active</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onActiveProjectChange?.(null)}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-transparent text-muted-foreground hover:border-border hover:bg-background"
+                aria-label="Unlink project"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
+
           {/* Document / file chip */}
           {attachedFile && (
             <div
@@ -563,6 +597,36 @@ export function ChatInput({
               accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
               onChange={handleImageChange}
             />
+
+            {/* Project picker toggle */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowProjectPicker((v) => !v)}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent transition-colors hover:border-border hover:bg-background/60 ${activeProject ? "text-foreground" : "text-muted-foreground"}`}
+                aria-label="Link to Project"
+                title="Link to Project"
+              >
+                {activeProject ? (
+                  <span className="relative">
+                    <FolderOpen className="size-4" />
+                    <span
+                      className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full"
+                      style={{ background: activeProject.color }}
+                    />
+                  </span>
+                ) : (
+                  <FolderOpen className="size-4" />
+                )}
+              </button>
+              {showProjectPicker && (
+                <ProjectPicker
+                  activeProjectId={activeProject?.id ?? null}
+                  onSelect={(p) => { onActiveProjectChange?.(p); }}
+                  onClose={() => setShowProjectPicker(false)}
+                />
+              )}
+            </div>
           <textarea
             ref={textareaRef}
             value={value}

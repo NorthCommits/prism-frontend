@@ -153,6 +153,8 @@ export async function sendMessageStream(
   image_media_type?: string,
   // Active prompt template id to apply on this turn.
   active_template?: string,
+  // Project whose files/instructions are injected into this turn.
+  project_id?: string,
   // Optional agent-mode progress callbacks.
   onAgentPlan?: (steps: string[], total: number) => void,
   onAgentStepStart?: (step: number, total: number, title: string) => void,
@@ -173,6 +175,7 @@ export async function sendMessageStream(
         image_base64,
         image_media_type,
         active_template,
+        project_id,
       }),
     });
 

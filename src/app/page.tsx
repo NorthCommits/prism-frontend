@@ -8,6 +8,7 @@ import {
   Code2,
   Cpu,
   FileText,
+  FolderOpen,
   Globe,
   Image,
   Keyboard,
@@ -40,7 +41,10 @@ import {
   fetchModels,
   sendMessageStream,
 } from "../lib/api";
-import { saveProfile } from "@/lib/profile";
+import { checkOnboardingStatus, saveProfile } from "@/lib/profile";
+import { getProject, linkConversationToProject } from "@/lib/projects";
+import type { Project } from "@/lib/projects";
+import { Onboarding } from "@/components/Onboarding";
 import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatWindow } from "@/components/ChatWindow";
@@ -204,6 +208,13 @@ export default function Home() {
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement | null>(null);
 
+  // Onboarding overlay — shown once after a user's first login.
+  const [showOnboarding, setShowOnboarding]   = useState(false);
+  const [onboardingName, setOnboardingName]   = useState("");
+
+  // Active project linked to the current conversation.
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+
   // Sidebar conversation search.
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -315,6 +326,18 @@ export default function Home() {
         return;
       }
       setUser(session.user as UserLike);
+
+      // Show onboarding the first time a user logs in.
+      const completed = await checkOnboardingStatus();
+      if (!completed) {
+        const meta = session.user.user_metadata ?? {};
+        const firstName =
+          (meta.first_name as string | undefined) ||
+          ((meta.full_name as string | undefined) ?? "").split(" ")[0] ||
+          "";
+        setOnboardingName(firstName);
+        setShowOnboarding(true);
+      }
     };
     initAuth();
 
@@ -538,8 +561,22 @@ export default function Home() {
         search_query: message.search_query,
       }));
       setMessages(mapped);
+
+      // Restore active project from the conversation's linked project_id.
+      const conv = conversations.find((c) => c.id === id);
+      if (conv?.project_id) {
+        try {
+          const proj = await getProject(conv.project_id);
+          setActiveProject(proj);
+        } catch {
+          setActiveProject(null);
+        }
+      } else {
+        setActiveProject(null);
+      }
     } catch {
       setMessages([]);
+      setActiveProject(null);
     }
   };
 
@@ -622,6 +659,9 @@ export default function Home() {
     image?: { base64: string; mediaType: string },
     template?: { id: string; label: string }
   ) => {
+    const activeProjectId = activeProject?.id ?? null;
+    console.log("Active project ID:", activeProjectId);
+
     if (!selectedModel) {
       return;
     }
@@ -657,6 +697,10 @@ export default function Home() {
           title.length > 35 ? title.slice(0, 35).trimEnd() : title,
           selectedModel
         );
+        if (activeProjectId) {
+          await linkConversationToProject(conversation.id, activeProjectId);
+          console.log("Linked to project:", activeProjectId);
+        }
         conversationId = conversation.id;
         setActiveConversationId(conversation.id);
         setNewConversationId(conversation.id);
@@ -826,6 +870,8 @@ export default function Home() {
         image?.mediaType,
         // Prompt template id for this turn.
         template?.id,
+        // Project whose files/instructions should be injected.
+        activeProject?.id,
         // Agent-mode progress callbacks.
         (steps, total) => {
           setIsAgentMode(true);
@@ -911,6 +957,17 @@ export default function Home() {
         </div>
       )}
 
+      {/* Onboarding overlay — shown once after first login, sits above the chat UI */}
+      {showOnboarding && (
+        <Onboarding
+          initialName={onboardingName}
+          onComplete={(firstMessage) => {
+            setShowOnboarding(false);
+            if (firstMessage) setInputValue(firstMessage);
+          }}
+        />
+      )}
+
       {/*
         Stable layout root — never has a transform applied, so all
         position:fixed children (sidebar, input bar) anchor correctly to
@@ -971,11 +1028,20 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleCreateConversation}
-                  className="mb-3 relative overflow-hidden inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#2563eb] px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:brightness-110 hover:shadow-[0_0_25px_rgba(124,58,237,0.25)] before:absolute before:inset-0 before:-translate-x-full before:bg-gradient-to-r before:from-transparent before:via-white/25 before:to-transparent before:transition-transform before:duration-700 hover:before:translate-x-full"
+                  className="mb-2 relative overflow-hidden inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#2563eb] px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:brightness-110 hover:shadow-[0_0_25px_rgba(124,58,237,0.25)] before:absolute before:inset-0 before:-translate-x-full before:bg-gradient-to-r before:from-transparent before:via-white/25 before:to-transparent before:transition-transform before:duration-700 hover:before:translate-x-full"
                 >
                   <Plus className="size-4" />
                   <span>New Chat</span>
                 </button>
+
+                {/* Projects link */}
+                <a
+                  href="/projects"
+                  className="mb-3 inline-flex w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <FolderOpen className="size-3.5 shrink-0" />
+                  <span>Projects</span>
+                </a>
 
                 {/* Search bar */}
                 <div className="relative mb-3">
@@ -1362,6 +1428,29 @@ export default function Home() {
           </header>
 
           <main className="flex min-h-0 flex-1 flex-col">
+            {/* Project context banner — shown when a project is linked */}
+            {activeProject && (
+              <div
+                className="flex items-center gap-2 border-b border-border px-4 py-2 text-[12px] text-muted-foreground"
+                style={{ borderLeftWidth: "3px", borderLeftColor: activeProject.color, background: `${activeProject.color}08` }}
+              >
+                <FolderOpen size={13} style={{ color: activeProject.color }} />
+                <span className="font-medium" style={{ color: activeProject.color }}>{activeProject.name}</span>
+                <span className="text-muted-foreground/60">· Project context active</span>
+                <button
+                  onClick={async () => {
+                    if (activeConversationId) {
+                      try { await linkConversationToProject(activeConversationId, null); } catch { /* ignore */ }
+                    }
+                    setActiveProject(null);
+                  }}
+                  className="ml-auto flex cursor-pointer items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+
             {isAgentMode && (
               <AgentProgress
                 steps={agentSteps}
@@ -1398,6 +1487,22 @@ export default function Home() {
             inputRef={inputRef}
             currentModel={selectedModel}
             modelsById={modelsById}
+            activeProject={activeProject}
+            onActiveProjectChange={async (project) => {
+              setActiveProject(project);
+              if (activeConversationId) {
+                try {
+                  await linkConversationToProject(activeConversationId, project?.id ?? null);
+                  if (project) {
+                    pushToast(`Linked to "${project.name}"`, "success");
+                    /* Refresh project details to keep file count accurate. */
+                    getProject(project.id).then(setActiveProject).catch(() => {});
+                  }
+                } catch {
+                  pushToast("Failed to link project", "error");
+                }
+              }
+            }}
           />
         </div>
       </div>
