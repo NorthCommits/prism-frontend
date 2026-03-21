@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import type { AvailableModel, ChatMessage, ModelId } from "../lib/api";
+import { MessageFeedback } from "@/components/MessageFeedback";
 import { PlotRenderer } from "@/components/PlotRenderer";
 import { ImageRenderer } from "@/components/ImageRenderer";
 import ReactMarkdown from "react-markdown";
@@ -43,6 +44,8 @@ type ChatWindowProps = {
   isLoading?: boolean;
   onQuoteReply?: (text: string) => void;
   onSuggestionClick?: (text: string) => void;
+  /** Active conversation id passed through to the feedback widget. */
+  conversationId?: string | null;
 };
 
 // Basic parser to split plain text and fenced code blocks for readable display.
@@ -343,6 +346,7 @@ export function ChatWindow(props: ChatWindowProps) {
     isLoading = false,
     onQuoteReply,
     onSuggestionClick,
+    conversationId,
   } = props;
   const { addToast } = useToast();
   // Scroll container ref to keep view pinned to bottom.
@@ -704,6 +708,14 @@ export function ChatWindow(props: ChatWindowProps) {
                     {(chatMessage as ChatMessage & { active_template_label?: string }).active_template_label}
                   </span>
                 </div>
+              )}
+
+              {/* Feedback widget — only rendered for completed assistant messages */}
+              {!isUser && !chatMessage.isStreaming && conversationId && (
+                <MessageFeedback
+                  messageContent={plainText}
+                  conversationId={conversationId}
+                />
               )}
 
               {!isUser && (

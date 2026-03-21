@@ -1007,6 +1007,7 @@ export default function Home() {
               messages={messages}
               modelsById={modelsById}
               isLoading={isLoading}
+              conversationId={activeConversationId}
               onQuoteReply={handleQuoteReply}
               onSuggestionClick={(text) => {
                 setInputValue(text);
