@@ -2,15 +2,30 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  MessageSquare,
-  Plus,
-  Menu,
-  Sun,
-  Moon,
-  Trash2,
-  PanelLeftClose,
+  BarChart2,
+  BookOpen,
+  Brain,
+  Code2,
+  Cpu,
+  FileText,
+  Globe,
+  Image,
+  Keyboard,
+  Lightbulb,
   LogOut,
+  Menu,
+  MessageCircle,
+  Moon,
+  PanelLeftClose,
+  PenLine,
+  Plus,
+  Search,
+  Sparkles,
+  Sun,
+  Terminal,
+  Trash2,
   UserCircle,
+  Wand2,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -23,6 +38,7 @@ import {
   fetchModels,
   sendMessageStream,
 } from "../lib/api";
+import { saveProfile } from "@/lib/profile";
 import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatWindow } from "@/components/ChatWindow";
@@ -38,6 +54,76 @@ import {
   saveMessage,
 } from "@/lib/history";
 import { createClient } from "@/lib/supabase";
+
+// Maps conversation title keywords to a Lucide icon component and its color tokens.
+type IconConfig = {
+  icon: React.ElementType;
+  bg: string;
+  color: string;
+  activeBg: string;
+  activeColor: string;
+};
+
+const ICON_CONFIGS: Record<string, IconConfig> = {
+  Code2:        { icon: Code2,        bg: "bg-blue-500/10",   color: "text-blue-400",   activeBg: "bg-blue-500/25",   activeColor: "text-white" },
+  Globe:        { icon: Globe,        bg: "bg-green-500/10",  color: "text-green-400",  activeBg: "bg-green-500/25",  activeColor: "text-white" },
+  Image:        { icon: Image,        bg: "bg-pink-500/10",   color: "text-pink-400",   activeBg: "bg-pink-500/25",   activeColor: "text-white" },
+  PenLine:      { icon: PenLine,      bg: "bg-yellow-500/10", color: "text-yellow-400", activeBg: "bg-yellow-500/25", activeColor: "text-white" },
+  Lightbulb:    { icon: Lightbulb,    bg: "bg-amber-500/10",  color: "text-amber-400",  activeBg: "bg-amber-500/25",  activeColor: "text-white" },
+  BarChart2:    { icon: BarChart2,    bg: "bg-cyan-500/10",   color: "text-cyan-400",   activeBg: "bg-cyan-500/25",   activeColor: "text-white" },
+  Terminal:     { icon: Terminal,     bg: "bg-emerald-500/10",color: "text-emerald-400",activeBg: "bg-emerald-500/25",activeColor: "text-white" },
+  FileText:     { icon: FileText,     bg: "bg-orange-500/10", color: "text-orange-400", activeBg: "bg-orange-500/25", activeColor: "text-white" },
+  Cpu:          { icon: Cpu,          bg: "bg-purple-500/10", color: "text-purple-400", activeBg: "bg-purple-500/25", activeColor: "text-white" },
+  Brain:        { icon: Brain,        bg: "bg-violet-500/10", color: "text-violet-400", activeBg: "bg-violet-500/25", activeColor: "text-white" },
+  MessageCircle:{ icon: MessageCircle,bg: "bg-gray-500/10",   color: "text-gray-400",   activeBg: "bg-gray-500/25",   activeColor: "text-white" },
+};
+
+// Pick an icon config from the conversation title using keyword matching.
+function getConversationIconConfig(title: string): IconConfig {
+  const t = title.toLowerCase();
+  if (t.includes("code") || t.includes("function") || t.includes("debug") ||
+      t.includes("error") || t.includes("python") || t.includes("javascript") ||
+      t.includes("api") || t.includes("bug"))
+    return ICON_CONFIGS.Code2;
+
+  if (t.includes("search") || t.includes("latest") || t.includes("news") ||
+      t.includes("current") || t.includes("today") || t.includes("recent"))
+    return ICON_CONFIGS.Globe;
+
+  if (t.includes("image") || t.includes("generate") || t.includes("draw") ||
+      t.includes("picture") || t.includes("photo") || t.includes("visual"))
+    return ICON_CONFIGS.Image;
+
+  if (t.includes("write") || t.includes("email") || t.includes("draft") ||
+      t.includes("essay") || t.includes("linkedin") || t.includes("post"))
+    return ICON_CONFIGS.PenLine;
+
+  if (t.includes("explain") || t.includes("what is") ||
+      t.includes("how does") || t.includes("understand"))
+    return ICON_CONFIGS.Lightbulb;
+
+  if (t.includes("chart") || t.includes("data") || t.includes("analysis") ||
+      t.includes("plot") || t.includes("graph") || t.includes("csv"))
+    return ICON_CONFIGS.BarChart2;
+
+  if (t.includes("test") || t.includes("run") ||
+      t.includes("execute") || t.includes("output"))
+    return ICON_CONFIGS.Terminal;
+
+  if (t.includes("summarize") || t.includes("summary") ||
+      t.includes("document") || t.includes("pdf"))
+    return ICON_CONFIGS.FileText;
+
+  if (t.includes("build") || t.includes("create") ||
+      t.includes("implement") || t.includes("develop"))
+    return ICON_CONFIGS.Cpu;
+
+  if (t.includes("brainstorm") || t.includes("idea") ||
+      t.includes("suggest") || t.includes("help me"))
+    return ICON_CONFIGS.Brain;
+
+  return ICON_CONFIGS.MessageCircle;
+}
 
 function formatRelativeTime(isoDate: string): string {
   const now = Date.now();
@@ -90,6 +176,11 @@ export default function Home() {
   const [agentCurrentStep, setAgentCurrentStep] = useState(0);
   const [agentCompletedSteps, setAgentCompletedSteps] = useState<number[]>([]);
   const [agentComplete, setAgentComplete] = useState(false);
+  // Profile dropdown open/close + keyboard-shortcuts modal.
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const profileDropdownRef = useRef<HTMLDivElement | null>(null);
+
   // Track whether the splash overlay should exist in the DOM at all.
   // Always starts as true so the server and first client render match (no
   // hydration mismatch). A one-time effect immediately hides it on the client
@@ -200,12 +291,29 @@ export default function Home() {
 
     const {
       data: authListener,
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       if (!session) {
         setUser(null);
         router.push("/login");
       } else {
         setUser(session.user as UserLike);
+
+        // After email verification the user lands here for the first time.
+        // If signup stored a pending profile name, save it now and clear it.
+        if (event === "SIGNED_IN") {
+          try {
+            const raw = window.localStorage.getItem("prism_pending_profile");
+            if (raw) {
+              const pending = JSON.parse(raw) as { display_name: string };
+              window.localStorage.removeItem("prism_pending_profile");
+              saveProfile({ display_name: pending.display_name }).catch(
+                () => {/* Non-fatal — user can update profile manually. */}
+              );
+            }
+          } catch {
+            // localStorage unavailable or JSON malformed — skip silently.
+          }
+        }
       }
     });
 
@@ -434,6 +542,22 @@ export default function Home() {
       pushToast("Something went wrong", "error");
     }
   };
+
+  // Close profile dropdown when user clicks outside of it.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        profileDropdownRef.current &&
+        !profileDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsProfileOpen(false);
+      }
+    };
+    if (isProfileOpen) {
+      document.addEventListener("mousedown", handler);
+    }
+    return () => document.removeEventListener("mousedown", handler);
+  }, [isProfileOpen]);
 
   const handleSend = async (
     message: string,
@@ -781,7 +905,7 @@ export default function Home() {
             </div>
 
             <div
-              className={`flex-1 transition-opacity ${
+              className={`flex flex-col flex-1 min-h-0 transition-opacity ${
                 isMobile ? "duration-0" : "duration-[150ms]"
               } ease-[cubic-bezier(0.16,1,0.3,1)] ${
                 isSidebarContentVisible ? "opacity-100" : "opacity-0"
@@ -800,7 +924,7 @@ export default function Home() {
                   Recent
                 </div>
 
-                <div className="flex-1 overflow-y-auto pb-2 text-xs">
+                <div className="sidebar-scroll flex-1 overflow-y-auto pb-2 text-xs">
                   {isConversationsLoading ? (
                     <div className="space-y-2 px-2 text-[11px] text-muted-foreground">
                       <div className="h-4 w-full animate-pulse rounded bg-muted/60" />
@@ -834,7 +958,23 @@ export default function Home() {
                             onClick={() => handleOpenConversation(conversation.id)}
                             className="flex min-w-0 flex-1 items-center gap-2"
                           >
-                            <MessageSquare className="size-3.5 text-muted-foreground" />
+                            {/* Dynamic icon whose colour reflects the topic of the conversation */}
+                            {(() => {
+                              const cfg = getConversationIconConfig(conversation.title);
+                              const IconEl = cfg.icon;
+                              return (
+                                <span
+                                  className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
+                                    isActive
+                                      ? `${cfg.activeBg} ${cfg.activeColor}`
+                                      : `${cfg.bg} ${cfg.color}`
+                                  }`}
+                                  style={{ width: 24, height: 24 }}
+                                >
+                                  <IconEl className="size-3.5" />
+                                </span>
+                              );
+                            })()}
                             <div className="min-w-0 text-left">
                               <p className="line-clamp-1 text-foreground/90">
                                 {conversation.title}
@@ -861,40 +1001,8 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="mt-2 space-y-1 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] text-[11px] font-semibold text-white">
-                        {user?.email?.[0]?.toUpperCase() ?? "U"}
-                      </div>
-                      <span className="max-w-[120px] truncate">
-                        {user?.email ?? "Signed in"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label="Profile Settings"
-                        title="Profile Settings"
-                        onClick={() => router.push("/profile")}
-                      >
-                        <UserCircle className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label="Sign out"
-                        onClick={async () => {
-                          await supabase.auth.signOut();
-                          router.push("/login");
-                        }}
-                      >
-                        <LogOut className="size-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="text-[10px]">Prism v0.1.0 beta</div>
+                <div className="mt-2 border-t border-border/60 pt-3 text-[10px] text-muted-foreground">
+                  Prism v0.1.0 beta
                 </div>
             </div>
           </div>
@@ -965,7 +1073,83 @@ export default function Home() {
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
             />
-            <div className="flex w-32 justify-end">
+            <div className="flex w-32 items-center justify-end gap-2">
+              {/* Profile avatar + dropdown */}
+              <div ref={profileDropdownRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsProfileOpen((v) => !v)}
+                  aria-label="User menu"
+                  aria-expanded={isProfileOpen}
+                  className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#06b6d4] text-xs font-medium text-white shadow-sm transition-transform duration-150 hover:scale-105"
+                >
+                  {user?.email?.[0]?.toUpperCase() ?? "U"}
+                </button>
+
+                {/* Dropdown */}
+                {isProfileOpen && (
+                  <div className="absolute right-0 top-full z-50 mt-2 w-[220px] origin-top-right rounded-xl border bg-background/95 shadow-xl backdrop-blur-sm animate-[spring-in_180ms_cubic-bezier(0.16,1,0.3,1)_forwards]">
+                    {/* User info */}
+                    <div className="px-4 py-3">
+                      <p className="truncate text-[13px] font-semibold text-foreground">
+                        {user?.email ?? "Signed in"}
+                      </p>
+                      {user?.email && (
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          {user.email}
+                        </p>
+                      )}
+                    </div>
+                    <div className="mx-3 border-t border-border/60" />
+
+                    {/* Navigation items */}
+                    <div className="p-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          router.push("/profile");
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] text-foreground transition-colors hover:bg-muted"
+                      >
+                        <UserCircle className="size-4 shrink-0 text-muted-foreground" />
+                        Profile Settings
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          setIsShortcutsOpen(true);
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] text-foreground transition-colors hover:bg-muted"
+                      >
+                        <Keyboard className="size-4 shrink-0 text-muted-foreground" />
+                        Keyboard Shortcuts
+                      </button>
+                    </div>
+
+                    <div className="mx-3 border-t border-border/60" />
+
+                    {/* Sign out */}
+                    <div className="p-1.5">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setIsProfileOpen(false);
+                          await supabase.auth.signOut();
+                          router.push("/login");
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] text-red-500 transition-colors hover:bg-red-500/10"
+                      >
+                        <LogOut className="size-4 shrink-0" />
+                        Sign Out
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Theme toggle */}
               <button
                 type="button"
                 aria-label="Toggle theme"
@@ -1035,6 +1219,50 @@ export default function Home() {
         </div>
       </div>
       <ToastContainer />
+
+      {/* Keyboard shortcuts modal */}
+      {isShortcutsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={() => setIsShortcutsOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border bg-background p-6 shadow-2xl animate-[spring-in_180ms_cubic-bezier(0.16,1,0.3,1)_forwards]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-semibold">
+                <Keyboard className="size-4 text-muted-foreground" />
+                Keyboard Shortcuts
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsShortcutsOpen(false)}
+                className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-2 text-[12px]">
+              {[
+                ["Send message", "Enter"],
+                ["New line", "Shift + Enter"],
+                ["New conversation", "Ctrl + K"],
+                ["Toggle sidebar", "Ctrl + B"],
+                ["History navigation", "↑ / ↓"],
+              ].map(([label, keys]) => (
+                <div key={label} className="flex items-center justify-between">
+                  <span className="text-muted-foreground">{label}</span>
+                  <kbd className="rounded-md border bg-muted px-2 py-0.5 font-mono text-[11px] text-foreground">
+                    {keys}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       </>
     </ToastProvider>
   );
