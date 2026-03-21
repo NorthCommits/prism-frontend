@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { motion, useInView } from "motion/react";
 import { ReactLenis } from "lenis/react";
 import Link from "next/link";
-import { ArrowRight, ChevronDown, Play } from "lucide-react";
+import { ArrowRight, ArrowUp, Check, ChevronDown, Play, X } from "lucide-react";
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -46,19 +46,6 @@ const MEMORY_NODES = [
   { label: "Goals",    x: 35,  y: 115, color: "#a78bfa" },
 ];
 
-const VOICE_BARS = [
-  { h: "35%", d: "0s" },
-  { h: "68%", d: "0.13s" },
-  { h: "92%", d: "0.06s" },
-  { h: "55%", d: "0.26s" },
-  { h: "82%", d: "0.19s" },
-  { h: "44%", d: "0.09s" },
-  { h: "96%", d: "0.03s" },
-  { h: "62%", d: "0.32s" },
-  { h: "78%", d: "0.16s" },
-  { h: "50%", d: "0.22s" },
-  { h: "87%", d: "0.28s" },
-];
 
 const STATS = [
   { value: "10+", label: "Specialist AI Models" },
@@ -109,8 +96,9 @@ const LANDING_CSS = `
     0%,100% { opacity: 1; }
     50%     { opacity: 0; }
   }
-  @keyframes lp-voicebar {
-    to { transform: scaleY(0.15); }
+  @keyframes lp-travel {
+    0%   { left: 0; }
+    100% { left: calc(100% - 10px); }
   }
   @keyframes lp-drawline {
     to { stroke-dashoffset: 0; }
@@ -133,9 +121,17 @@ const LANDING_CSS = `
   .lp-float   { animation: lp-float 3s ease-in-out infinite; }
   .lp-cursor  { animation: lp-blink 1s step-end infinite; }
   .lp-spin    { animation: lp-spin 1.2s linear infinite; display:inline-block; }
-  .lp-glow    { animation: lp-glow 2.5s ease-in-out infinite; }
-  .lp-marquee { animation: lp-marquee 32s linear infinite; }
-  .lp-vbar    { animation: lp-voicebar 0.55s ease-in-out infinite alternate; transform-origin: bottom; }
+  .lp-glow         { animation: lp-glow 2.5s ease-in-out infinite; }
+  .lp-marquee      { animation: lp-marquee 32s linear infinite; }
+  .lp-travel-dot   { animation: lp-travel 2.5s ease-in-out infinite alternate; position: absolute; top: 50%; transform: translateY(-50%); }
+  @keyframes lp-bounce {
+    0%, 80%, 100% { transform: scale(0.75); opacity: 0.35; }
+    40%            { transform: scale(1);    opacity: 1;    }
+  }
+  .demo-scroll::-webkit-scrollbar       { width: 4px; }
+  .demo-scroll::-webkit-scrollbar-track { background: transparent; }
+  .demo-scroll::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 999px; }
+  .demo-scroll::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.55); }
 `;
 
 // ── Primitive helpers ──────────────────────────────────────────────────────
@@ -486,24 +482,6 @@ function AgentDemo() {
   );
 }
 
-function VoiceWaveform() {
-  return (
-    <div className="flex items-end justify-center gap-1.5" style={{ height: "80px" }}>
-      {VOICE_BARS.map((bar, i) => (
-        <div
-          key={i}
-          className="lp-vbar w-1.5 rounded-full"
-          style={{
-            height: bar.h,
-            background: "linear-gradient(to top, #8b5cf6, #06b6d4)",
-            animationDelay: bar.d,
-            willChange: "transform",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
 
 function MemoryMap() {
   const ref = useRef<SVGSVGElement>(null);
@@ -857,6 +835,399 @@ function HeroSection() {
   );
 }
 
+/* Interactive live demo with SSE streaming */
+function LiveDemoSection() {
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(sectionRef as React.RefObject<HTMLElement>, { once: true, margin: "-80px 0px" });
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  /* Accumulate streaming tokens outside React state to avoid stale closures */
+  const streamingRef = useRef("");
+
+  type DemoMessage = { role: "user" | "assistant"; content: string; isError?: boolean };
+
+  const [demoMessages, setDemoMessages] = useState<DemoMessage[]>([
+    { role: "user", content: "What can you help me with?" },
+    {
+      role: "assistant",
+      content:
+        "I'm Prism — your intelligent AI copilot. I can write code, search the web, analyze images, remember your preferences, and tackle complex multi-step tasks. What would you like to explore?",
+    },
+  ]);
+  const [input, setInput]                       = useState("");
+  const [isLoading, setIsLoading]               = useState(false);
+  const [messagesRemaining, setMessagesRemaining] = useState(3);
+  const [limitReached, setLimitReached]         = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
+
+  const API_URL =
+    process.env.NEXT_PUBLIC_API_URL || "https://prism-backend-sjhg.onrender.com";
+
+  /* Auto-scroll to bottom whenever messages or streaming content updates */
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [demoMessages, streamingContent]);
+
+  const sendMessage = async (text?: string) => {
+    const messageText = (text ?? input).trim();
+    if (!messageText || isLoading || limitReached) return;
+
+    const userMsg: DemoMessage = { role: "user", content: messageText };
+    setDemoMessages((prev) => [...prev, userMsg]);
+    setInput("");
+    setIsLoading(true);
+    streamingRef.current = "";
+
+    try {
+      const response = await fetch(`${API_URL}/api/v1/demo/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: messageText,
+          /* Send last 4 messages as context, including the one just added */
+          history: [...demoMessages, userMsg].slice(-4),
+        }),
+      });
+
+      if (response.status === 429) {
+        setLimitReached(true);
+        setMessagesRemaining(0);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!response.ok || !response.body) throw new Error("Request failed");
+
+      const reader  = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const lines = decoder.decode(value, { stream: true }).split("\n");
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.type === "metadata") {
+              setMessagesRemaining(data.messages_remaining);
+              if (data.limit_reached) setLimitReached(true);
+            }
+
+            if (data.type === "token") {
+              streamingRef.current += data.content;
+              setStreamingContent(streamingRef.current);
+            }
+
+            if (data.type === "done") {
+              setDemoMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: streamingRef.current },
+              ]);
+              streamingRef.current = "";
+              setStreamingContent("");
+              setIsLoading(false);
+            }
+          } catch {
+            /* Skip malformed SSE lines */
+          }
+        }
+      }
+    } catch {
+      setDemoMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Something went wrong. Please try again.", isError: true },
+      ]);
+      setIsLoading(false);
+    }
+  };
+
+  /* Counter badge color: green ≥ 2, amber = 1, red = 0 */
+  const counterColor =
+    messagesRemaining >= 2 ? "#22c55e" : messagesRemaining === 1 ? "#f59e0b" : "#ef4444";
+
+  const suggestedPrompts = [
+    "What makes Prism unique?",
+    "How does smart routing work?",
+    "What can you remember about me?",
+    "Tell me about agent mode",
+  ];
+
+  /* Shared styles for Prism assistant bubbles */
+  const assistantBubbleStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: "18px 18px 18px 4px",
+    color: "rgba(255,255,255,0.85)",
+  };
+
+  return (
+    <section
+      className="relative overflow-hidden border-t border-white/[0.05]"
+      style={{ background: "#000" }}
+    >
+      {/* Centered purple blob */}
+      <div className="pointer-events-none absolute inset-0">
+        <div
+          className="lp-blob3 absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[150px]"
+          style={{ background: "rgba(139,92,246,0.12)" }}
+        />
+      </div>
+
+      <div ref={sectionRef} className="relative mx-auto max-w-3xl px-6 py-24">
+        {/* Section header */}
+        <div className="mb-10 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.5 }}
+            className="mb-4 flex items-center justify-center gap-2"
+          >
+            {/* Pulsing green live indicator */}
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            <span
+              className="text-[11px] font-bold uppercase text-violet-400"
+              style={{ letterSpacing: "0.2em" }}
+            >
+              LIVE DEMO
+            </span>
+          </motion.div>
+
+          <motion.h2
+            initial={{ opacity: 0, y: 20 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.65, delay: 0.1 }}
+            className="mb-3 font-black leading-[0.93] tracking-[-0.04em] text-white"
+            style={{ fontSize: "clamp(28px, 4.5vw, 52px)" }}
+          >
+            Try Prism. Right now.
+          </motion.h2>
+
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={inView ? { opacity: 1 } : {}}
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="text-[15px] text-white/40"
+          >
+            No signup required. Ask anything.
+          </motion.p>
+        </div>
+
+        {/* Chat window — slides up + glows on entrance */}
+        <motion.div
+          initial={{ opacity: 0, y: 40, boxShadow: "0 0 0px rgba(139,92,246,0)" }}
+          animate={
+            inView
+              ? {
+                  opacity: 1,
+                  y: 0,
+                  boxShadow: [
+                    "0 0 0px rgba(139,92,246,0)",
+                    "0 0 80px rgba(139,92,246,0.25)",
+                    "0 0 40px rgba(139,92,246,0.1)",
+                  ],
+                }
+              : {}
+          }
+          transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          className="overflow-hidden rounded-[20px]"
+          style={{ border: "1px solid rgba(139,92,246,0.3)", background: "rgba(0,0,0,0.85)" }}
+        >
+          {/* macOS-style window header */}
+          <div
+            className="flex items-center justify-between border-b px-4 py-3"
+            style={{ borderColor: "rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}
+          >
+            {/* Traffic lights */}
+            <div className="flex items-center gap-2">
+              <div className="h-3 w-3 rounded-full" style={{ background: "#ff5f57" }} />
+              <div className="h-3 w-3 rounded-full" style={{ background: "#ffbd2e" }} />
+              <div className="h-3 w-3 rounded-full" style={{ background: "#28c840" }} />
+            </div>
+
+            <span className="text-[12px] font-medium text-white/30">Prism Demo</span>
+
+            {/* Messages remaining counter */}
+            <span className="text-[11px] font-semibold" style={{ color: counterColor }}>
+              {limitReached
+                ? "Limit reached"
+                : `${messagesRemaining} message${messagesRemaining !== 1 ? "s" : ""} remaining`}
+            </span>
+          </div>
+
+          {/* Scrollable messages area */}
+          <div className="demo-scroll overflow-y-auto p-5" style={{ height: "320px" }}>
+            {demoMessages.map((msg, i) => (
+              <div
+                key={i}
+                className={`mb-4 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                {msg.role === "user" ? (
+                  <div
+                    className="max-w-[80%] px-4 py-2.5 text-[13px] leading-relaxed text-white"
+                    style={{
+                      background: "linear-gradient(135deg, #8b5cf6, #06b6d4)",
+                      borderRadius: "18px 18px 4px 18px",
+                    }}
+                  >
+                    {msg.content}
+                  </div>
+                ) : (
+                  <div className="max-w-[80%]">
+                    <div className="mb-1 flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">
+                        PRISM
+                      </span>
+                    </div>
+                    <div
+                      className="px-4 py-2.5 text-[13px] leading-relaxed"
+                      style={{
+                        ...assistantBubbleStyle,
+                        ...(msg.isError
+                          ? { borderColor: "rgba(239,68,68,0.4)", color: "rgba(239,68,68,0.85)" }
+                          : {}),
+                      }}
+                    >
+                      {msg.content}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Streaming bubble: typing dots → token stream → blinking cursor */}
+            {isLoading && (
+              <div className="mb-4 flex justify-start">
+                <div className="max-w-[80%]">
+                  <div className="mb-1 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">
+                      PRISM
+                    </span>
+                  </div>
+                  <div className="px-4 py-2.5 text-[13px] leading-relaxed" style={assistantBubbleStyle}>
+                    {streamingContent ? (
+                      <>
+                        {streamingContent}
+                        <span className="lp-cursor ml-0.5 inline-block h-3.5 w-px bg-violet-400" />
+                      </>
+                    ) : (
+                      /* Bouncing typing dots while waiting for first token */
+                      <div className="flex items-center gap-1 py-0.5">
+                        {[0, 1, 2].map((j) => (
+                          <div
+                            key={j}
+                            className="h-1.5 w-1.5 rounded-full bg-white/40"
+                            style={{ animation: `lp-bounce 1s ease-in-out ${j * 0.2}s infinite` }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scroll anchor */}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input row OR rate-limit CTA */}
+          {limitReached ? (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, type: "spring" }}
+              className="p-6 text-center"
+              style={{
+                background: "rgba(139,92,246,0.07)",
+                borderTop: "1px solid rgba(139,92,246,0.2)",
+              }}
+            >
+              <p className="mb-1 text-[14px] font-semibold text-white">✦ You&apos;ve tried Prism!</p>
+              <p className="mb-5 text-[13px] leading-relaxed text-white/50">
+                Sign up free to unlock unlimited conversations,
+                <br />
+                memory, voice, and more.
+              </p>
+              <Link
+                href="/login"
+                className="inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-85"
+                style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)" }}
+              >
+                Create Free Account
+                <ArrowRight size={13} />
+              </Link>
+            </motion.div>
+          ) : (
+            <div
+              className="flex items-center gap-3 px-4 py-3"
+              style={{
+                borderTop: "1px solid rgba(255,255,255,0.06)",
+                background: "rgba(255,255,255,0.02)",
+              }}
+            >
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                placeholder="Ask Prism anything..."
+                disabled={isLoading}
+                className="flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-white/25 disabled:opacity-50"
+              />
+              <button
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || isLoading || limitReached}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition-all hover:scale-105 hover:shadow-[0_0_12px_rgba(139,92,246,0.5)] disabled:opacity-40 disabled:hover:scale-100"
+                style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)" }}
+              >
+                {isLoading ? (
+                  /* CSS spinner — uses lp-spin keyframe via inline style to avoid display:inline-block override */
+                  <div
+                    className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white"
+                    style={{ animation: "lp-spin 0.8s linear infinite" }}
+                  />
+                ) : (
+                  <ArrowUp size={15} />
+                )}
+              </button>
+            </div>
+          )}
+        </motion.div>
+
+        {/* Suggested prompt chips */}
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {suggestedPrompts.map((prompt, i) => (
+            <motion.button
+              key={prompt}
+              initial={{ opacity: 0, y: 8 }}
+              animate={inView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.4, delay: 0.4 + i * 0.08 }}
+              onClick={() => sendMessage(prompt)}
+              disabled={isLoading || limitReached}
+              className="cursor-pointer rounded-full border px-4 py-2 text-[13px] text-white/60 transition-all hover:border-violet-500/50 hover:text-white disabled:opacity-40"
+              style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.02)" }}
+            >
+              ✦ {prompt}
+            </motion.button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MarqueeSection() {
   return (
     <div
@@ -928,64 +1299,558 @@ function AgentSection() {
   );
 }
 
-function VoiceSection() {
+/* Preference evolution / feedback learning section */
+function EvolvesWithYouSection() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref as React.RefObject<HTMLElement>, { once: true, margin: "-80px 0px" });
-  const voices = ["Nova", "Alloy", "Echo", "Fable", "Onyx", "Shimmer"];
+
+  const pills = [
+    { text: "Concise answers", bg: "rgba(139,92,246,0.15)", border: "rgba(139,92,246,0.4)",  color: "#a78bfa" },
+    { text: "Code over theory",  bg: "rgba(6,182,212,0.15)",   border: "rgba(6,182,212,0.4)",    color: "#22d3ee" },
+    { text: "Bullet points",     bg: "rgba(236,72,153,0.15)",  border: "rgba(236,72,153,0.4)",   color: "#f472b6" },
+  ];
 
   return (
     <section
       className="relative overflow-hidden border-t border-white/[0.05]"
-      style={{ minHeight: "100vh", background: "linear-gradient(to bottom, #000 0%, #0a0012 50%, #000 100%)" }}
+      style={{ minHeight: "100vh", background: "linear-gradient(to bottom, #000 0%, #080010 50%, #000 100%)" }}
     >
+      {/* Drifting blobs */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="lp-blob3 absolute left-1/2 top-1/2 h-[620px] w-[620px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[160px]" style={{ background: "rgba(139,92,246,0.15)" }} />
+        <div
+          className="lp-blob1 absolute -left-32 top-0 h-[500px] w-[500px] rounded-full blur-[140px]"
+          style={{ background: "rgba(139,92,246,0.13)" }}
+        />
+        <div
+          className="lp-blob2 absolute -right-32 bottom-0 h-[420px] w-[420px] rounded-full blur-[130px]"
+          style={{ background: "rgba(236,72,153,0.10)" }}
+        />
       </div>
 
-      <div ref={ref} className="relative flex min-h-screen flex-col items-center justify-center px-6 py-28 text-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={inView ? { opacity: 1, scale: 1 } : {}}
-          transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
-          className="mb-10 lp-glow"
-          style={{ padding: "24px 52px", borderRadius: "24px", border: "1px solid rgba(139,92,246,0.22)", background: "rgba(139,92,246,0.07)" }}
+      <div ref={ref} className="relative flex min-h-screen flex-col items-center justify-center px-6 py-24">
+        {/* ── Text block ── */}
+        <div className="mb-14 text-center">
+          {/* Label */}
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.5 }}
+            className="mb-5 text-[11px] font-bold uppercase"
+            style={{
+              letterSpacing: "0.2em",
+              background: "linear-gradient(135deg, #a78bfa, #ec4899)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+            }}
+          >
+            ADAPTIVE INTELLIGENCE
+          </motion.p>
+
+          {/* Headline — staggered word reveal */}
+          <h2
+            className="mb-5 font-black leading-[0.93] tracking-[-0.04em] text-white"
+            style={{ fontSize: "clamp(36px, 5.5vw, 64px)" }}
+          >
+            <WordReveal text="Gets better." baseDelay={0.1} />
+            <br />
+            <WordReveal text="Every conversation." baseDelay={0.25} />
+          </h2>
+
+          {/* Subtitle */}
+          <motion.p
+            initial={{ opacity: 0, y: 14 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.7, delay: 0.4 }}
+            className="mx-auto max-w-md text-[15px] leading-[1.82] text-white/45"
+          >
+            Prism watches what you love and what you don&apos;t.
+            Then silently evolves to match you perfectly.
+          </motion.p>
+        </div>
+
+        {/* ── Evolution timeline ── */}
+        <div className="w-full max-w-4xl">
+          <div className="relative">
+            {/* Connecting line — desktop only, sits behind the cards */}
+            <div
+              className="absolute hidden md:block"
+              style={{ top: "52px", left: "calc(16.67% + 20px)", right: "calc(16.67% + 20px)", height: "1px", zIndex: 0 }}
+            >
+              {/* Line draws itself left-to-right */}
+              <motion.div
+                initial={{ scaleX: 0 }}
+                animate={inView ? { scaleX: 1 } : {}}
+                transition={{ duration: 0.9, delay: 0.7, ease: [0.16, 1, 0.3, 1] }}
+                className="h-full"
+                style={{
+                  transformOrigin: "left center",
+                  background: "linear-gradient(to right, rgba(255,255,255,0.1), rgba(139,92,246,0.65), rgba(6,182,212,0.65))",
+                }}
+              />
+              {/* Dot that travels along the line */}
+              <div
+                className="lp-travel-dot h-2.5 w-2.5 rounded-full"
+                style={{
+                  background: "radial-gradient(circle, #a78bfa, #06b6d4)",
+                  boxShadow: "0 0 10px rgba(139,92,246,0.9)",
+                  animationPlayState: inView ? "running" : "paused",
+                  animationDelay: "1.8s",
+                }}
+              />
+            </div>
+
+            {/* Three evolution cards */}
+            <div className="relative grid grid-cols-1 gap-5 md:grid-cols-3 md:gap-6" style={{ zIndex: 1 }}>
+
+              {/* Card 1 — Day 1 */}
+              <motion.div
+                initial={{ opacity: 0, x: -40 }}
+                animate={inView ? { opacity: 1, x: 0 } : {}}
+                transition={{ duration: 0.7, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                  Day 1
+                </p>
+                <div
+                  className="rounded-xl p-4"
+                  style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}
+                >
+                  <div className="mb-3 flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                    <span className="text-[11px] text-white/40">Prism</span>
+                  </div>
+                  <div className="space-y-1 text-[12px] leading-relaxed text-white/45">
+                    <p>Here is a comprehensive</p>
+                    <p>explanation of decorators</p>
+                    <p>in Python. A decorator is</p>
+                    <p>a design pattern that...</p>
+                    <p className="text-white/20">[paragraph continues...]</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-sm">👎</span>
+                  <span className="text-[11px] text-white/30">Too verbose</span>
+                </div>
+              </motion.div>
+
+              {/* Card 2 — Day 7, slightly elevated */}
+              <motion.div
+                initial={{ opacity: 0, y: 40 }}
+                animate={inView ? { opacity: 1, y: 0 } : {}}
+                transition={{ duration: 0.7, delay: 0.8, ease: [0.16, 1, 0.3, 1] }}
+                className="md:-mt-5"
+              >
+                <p
+                  className="mb-3 text-[11px] font-semibold uppercase tracking-widest"
+                  style={{ color: "#a78bfa" }}
+                >
+                  Day 7
+                </p>
+                <div
+                  className="rounded-xl p-4"
+                  style={{ background: "rgba(139,92,246,0.04)", border: "1px solid rgba(139,92,246,0.18)" }}
+                >
+                  <div className="mb-3 flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                    <span className="text-[11px] text-white/40">Prism</span>
+                  </div>
+                  <div className="space-y-1 text-[12px] leading-relaxed text-white/55">
+                    <p>Python decorator = wrapper</p>
+                    <p>function. Example:</p>
+                    <p className="mt-2 font-mono text-violet-400">@my_decorator</p>
+                    <p className="font-mono text-violet-400">def hello(): ...</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-sm">👍</span>
+                  <span className="text-[11px] text-white/40">Better!</span>
+                </div>
+              </motion.div>
+
+              {/* Card 3 — Day 30, most elevated + glowing */}
+              <motion.div
+                initial={{ opacity: 0, x: 40 }}
+                animate={inView ? { opacity: 1, x: 0 } : {}}
+                transition={{ duration: 0.7, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
+                className="md:-mt-10"
+              >
+                <p
+                  className="mb-3 text-[11px] font-semibold uppercase tracking-widest"
+                  style={{
+                    background: "linear-gradient(135deg, #8b5cf6, #06b6d4)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundClip: "text",
+                  }}
+                >
+                  Day 30
+                </p>
+                <div
+                  className="lp-glow rounded-xl p-4"
+                  style={{
+                    background: "rgba(139,92,246,0.07)",
+                    border: "1px solid rgba(139,92,246,0.38)",
+                    boxShadow: "0 0 32px rgba(139,92,246,0.14)",
+                  }}
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                      <span className="text-[11px] text-white/40">Prism</span>
+                    </div>
+                    {/* Shimmer star signals the "evolved" state */}
+                    <span className="text-[11px]" style={{ color: "#06b6d4" }}>✦</span>
+                  </div>
+                  <div className="space-y-1 text-[12px] leading-relaxed text-white/65">
+                    <p>• Wraps a function</p>
+                    <p>• Adds behavior</p>
+                    <p>• @syntax is sugar</p>
+                    <div className="mt-2 font-mono">
+                      <p className="text-emerald-400">def decorator(func):</p>
+                      <p className="text-emerald-400">&nbsp; return wrapper</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-base">👍</span>
+                  <span className="text-[11px] font-medium text-white/55">Perfect for me</span>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+
+          {/* ── What Prism learned ── */}
+          <div className="mt-14 text-center">
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={inView ? { opacity: 1 } : {}}
+              transition={{ duration: 0.5, delay: 1.1 }}
+              className="mb-5 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/30"
+            >
+              Prism learned:
+            </motion.p>
+
+            <div className="mb-5 flex flex-wrap items-center justify-center gap-3">
+              {pills.map((pill, i) => (
+                <motion.span
+                  key={pill.text}
+                  initial={{ opacity: 0, scale: 0.8, y: 8 }}
+                  animate={inView ? { opacity: 1, scale: 1, y: 0 } : {}}
+                  transition={{ duration: 0.4, delay: 1.2 + i * 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  className="inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-semibold"
+                  style={{ background: pill.bg, border: `1px solid ${pill.border}`, color: pill.color }}
+                >
+                  <span style={{ fontSize: "9px" }}>✦</span>
+                  {pill.text}
+                </motion.span>
+              ))}
+            </div>
+
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={inView ? { opacity: 1 } : {}}
+              transition={{ duration: 0.5, delay: 1.85 }}
+              className="text-[12px] text-white/25"
+            >
+              Automatically. From your feedback.
+            </motion.p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* Competitor comparison table */
+function ComparisonSection() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref as React.RefObject<HTMLElement>, { once: true, margin: "-60px 0px" });
+
+  type CellValue = "check" | "cross" | "paid" | "limited";
+  type DataRow   = { kind: "row";   feature: string; prism: CellValue; chatgpt: CellValue; claude: CellValue; copilot: CellValue };
+  type LabelRow  = { kind: "label"; text: string };
+  type TableItem = DataRow | LabelRow;
+
+  const tableItems: TableItem[] = [
+    { kind: "label", text: "Core AI Features" },
+    { kind: "row", feature: "Smart Model Routing",            prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
+    { kind: "row", feature: "Live Web Search",                prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
+    { kind: "row", feature: "Code Execution / Interpreter",   prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
+    { kind: "row", feature: "Image Vision (Upload & Analyze)",prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
+    { kind: "row", feature: "Image Generation",               prism: "check", chatgpt: "paid",    claude: "cross",   copilot: "check"   },
+    { kind: "row", feature: "Cross-Session Memory",           prism: "check", chatgpt: "paid",    claude: "cross",   copilot: "cross"   },
+    { kind: "row", feature: "Preference Evolution (Auto)",    prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
+    { kind: "row", feature: "Custom Instructions",            prism: "check", chatgpt: "check",   claude: "check",   copilot: "check"   },
+    { kind: "row", feature: "Prompt Templates",               prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "check"   },
+    { kind: "row", feature: "Multi-Step Agent Mode",          prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
+    { kind: "row", feature: "File Upload & Analysis",         prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
+    { kind: "row", feature: "Data Visualization (Charts)",    prism: "check", chatgpt: "paid",    claude: "cross",   copilot: "cross"   },
+    { kind: "row", feature: "Conversation Search",            prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
+    { kind: "label", text: "Platform & Ecosystem" },
+    { kind: "row", feature: "Mobile App",                     prism: "cross", chatgpt: "check",   claude: "check",   copilot: "check"   },
+    { kind: "row", feature: "API Access",                     prism: "cross", chatgpt: "paid",    claude: "paid",    copilot: "paid"    },
+    { kind: "row", feature: "Plugins / Extensions",           prism: "cross", chatgpt: "paid",    claude: "cross",   copilot: "check"   },
+    { kind: "row", feature: "Team Collaboration",             prism: "cross", chatgpt: "paid",    claude: "paid",    copilot: "paid"    },
+    { kind: "label", text: "Prism Unique" },
+    { kind: "row", feature: "Open Source",                    prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
+    { kind: "row", feature: "Free to Use",                    prism: "check", chatgpt: "limited", claude: "limited", copilot: "limited" },
+    { kind: "row", feature: "Feedback-Based Learning",        prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
+  ];
+
+  /* Renders a single table cell based on its value */
+  function Cell({ value, isPrism }: { value: CellValue; isPrism?: boolean }) {
+    if (value === "check") {
+      return (
+        <div
+          className="flex h-[22px] w-[22px] items-center justify-center rounded-full"
+          style={{
+            background: isPrism ? "rgba(34,197,94,0.22)" : "rgba(34,197,94,0.15)",
+            border: "1px solid rgba(34,197,94,0.3)",
+          }}
         >
-          <VoiceWaveform />
+          <Check size={12} color="#22c55e" />
+        </div>
+      );
+    }
+
+    if (value === "paid" || value === "limited") {
+      return (
+        <div className="flex flex-col items-center gap-0.5">
+          <div
+            className="flex h-[22px] w-[22px] items-center justify-center rounded-full"
+            style={{ background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.3)" }}
+          >
+            <Check size={12} color="#f59e0b" />
+          </div>
+          <span style={{ fontSize: "9px", color: "#f59e0b", lineHeight: 1 }}>
+            {value === "paid" ? "(paid)" : "(limited)"}
+          </span>
+        </div>
+      );
+    }
+
+    /* Cross */
+    return (
+      <div
+        className="flex h-[22px] w-[22px] items-center justify-center rounded-full"
+        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <X size={12} color="rgba(255,255,255,0.25)" />
+      </div>
+    );
+  }
+
+  /* Shared cell styles for the highlighted Prism column */
+  const prismCellStyle: React.CSSProperties = {
+    borderLeft: "1px solid rgba(139,92,246,0.3)",
+    borderRight: "1px solid rgba(139,92,246,0.3)",
+    background: "rgba(139,92,246,0.08)",
+  };
+
+  return (
+    <section
+      className="relative overflow-hidden border-t border-white/[0.05]"
+      style={{ background: "#000" }}
+    >
+      {/* Subtle blob top-right */}
+      <div className="pointer-events-none absolute inset-0">
+        <div
+          className="lp-blob2 absolute -right-32 -top-24 h-[380px] w-[380px] rounded-full blur-[130px]"
+          style={{ background: "rgba(88,28,220,0.10)" }}
+        />
+      </div>
+
+      <div ref={ref} className="relative mx-auto max-w-5xl px-6 py-24">
+        {/* Section header */}
+        <div className="mb-14 text-center">
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.5 }}
+            className="mb-4 text-[11px] font-bold uppercase text-violet-400"
+            style={{ letterSpacing: "0.2em" }}
+          >
+            COMPARISON
+          </motion.p>
+          <motion.h2
+            initial={{ opacity: 0, y: 20 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.65, delay: 0.1 }}
+            className="mb-4 font-black leading-[0.93] tracking-[-0.04em] text-white"
+            style={{ fontSize: "clamp(32px, 5vw, 58px)" }}
+          >
+            Why Prism?
+          </motion.h2>
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.6, delay: 0.18 }}
+            className="mx-auto max-w-[500px] text-[15px] leading-relaxed text-white/40"
+          >
+            Everything you need. Nothing you don&apos;t.
+          </motion.p>
+        </div>
+
+        {/* Table card — slides up on scroll */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.65, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          className="overflow-hidden rounded-2xl"
+          style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.02)" }}
+        >
+          {/* Horizontal scroll wrapper (mobile) */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[540px] border-collapse">
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                  <th className="py-5 pl-5 pr-4 text-left text-[12px] font-medium text-white/30">
+                    Feature
+                  </th>
+
+                  {/* Prism — highlighted header */}
+                  <th className="px-4 py-5 text-center" style={prismCellStyle}>
+                    <div className="flex flex-col items-center gap-1">
+                      <span
+                        className="text-[14px] font-black"
+                        style={{
+                          background: "linear-gradient(135deg, #a78bfa, #06b6d4)",
+                          WebkitBackgroundClip: "text",
+                          WebkitTextFillColor: "transparent",
+                          backgroundClip: "text",
+                        }}
+                      >
+                        PRISM
+                      </span>
+                      <span className="text-[10px] font-medium" style={{ color: "#a78bfa" }}>
+                        ✦ Recommended
+                      </span>
+                    </div>
+                  </th>
+
+                  <th className="px-4 py-5 text-center text-[13px] font-semibold text-white/50">
+                    ChatGPT
+                  </th>
+                  {/* Claude and Copilot hidden on mobile */}
+                  <th className="hidden px-4 py-5 text-center text-[13px] font-semibold text-white/50 md:table-cell">
+                    Claude
+                  </th>
+                  <th className="hidden px-4 py-5 text-center text-[13px] font-semibold text-white/50 md:table-cell">
+                    Copilot
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {(() => {
+                  /* Track only data-row index for staggered animation delays */
+                  let rowIdx = 0;
+                  return tableItems.map((item) => {
+                    if (item.kind === "label") {
+                      return (
+                        <tr
+                          key={`label-${item.text}`}
+                          style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
+                        >
+                          {/* Section label spanning all columns */}
+                          <td
+                            colSpan={5}
+                            className="py-2.5 pl-5 text-[11px] font-semibold uppercase text-white/30"
+                            style={{ letterSpacing: "0.15em", background: "rgba(255,255,255,0.015)" }}
+                          >
+                            {item.text}
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    const ri = rowIdx++;
+                    return (
+                      <motion.tr
+                        key={item.feature}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={inView ? { opacity: 1, y: 0 } : {}}
+                        transition={{ duration: 0.38, delay: 0.3 + ri * 0.04, ease: [0.16, 1, 0.3, 1] }}
+                        className="transition-colors hover:bg-white/[0.02]"
+                        style={{
+                          background: ri % 2 !== 0 ? "rgba(255,255,255,0.01)" : "transparent",
+                          borderBottom: "1px solid rgba(255,255,255,0.05)",
+                        }}
+                      >
+                        {/* Feature name */}
+                        <td className="py-4 pl-5 pr-4 text-[13px] text-white/65">
+                          {item.feature}
+                        </td>
+
+                        {/* Prism cell — only green checkmarks get a scale pop */}
+                        <td className="px-4 py-4 text-center" style={prismCellStyle}>
+                          <div className="flex justify-center">
+                            {item.prism === "check" ? (
+                              <motion.div
+                                initial={{ scale: 0 }}
+                                animate={inView ? { scale: [0, 1.2, 1] } : {}}
+                                transition={{ duration: 0.4, delay: 0.35 + ri * 0.04 }}
+                              >
+                                <Cell value={item.prism} isPrism />
+                              </motion.div>
+                            ) : (
+                              <Cell value={item.prism} isPrism />
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-4 text-center">
+                          <div className="flex justify-center">
+                            <Cell value={item.chatgpt} />
+                          </div>
+                        </td>
+
+                        {/* Hidden on mobile */}
+                        <td className="hidden px-4 py-4 text-center md:table-cell">
+                          <div className="flex justify-center">
+                            <Cell value={item.claude} />
+                          </div>
+                        </td>
+                        <td className="hidden px-4 py-4 text-center md:table-cell">
+                          <div className="flex justify-center">
+                            <Cell value={item.copilot} />
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </div>
         </motion.div>
 
-        <SectionLabel text="VOICE INTERFACE" color="text-violet-400" />
+        {/* Mobile note — only shown when Claude/Copilot columns are hidden */}
+        <p className="mt-3 text-center text-[11px] text-white/20 md:hidden">
+          Showing key comparison · scroll right to see more
+        </p>
 
-        <motion.h2
-          initial={{ opacity: 0, y: 24 }}
-          animate={inView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.75, delay: 0.12 }}
-          className="mb-5 font-black leading-[0.93] tracking-[-0.04em] text-white"
-          style={{ fontSize: "clamp(36px, 5.5vw, 64px)" }}
+        {/* Disclaimer */}
+        <p
+          className="mt-6 text-center text-[11px] leading-relaxed"
+          style={{ color: "rgba(255,255,255,0.25)" }}
         >
-          Speak. Listen. Converse.
-        </motion.h2>
+          * Honest comparison based on publicly available free and paid tier features as of 2026.
+          Prism is open source and continuously improving.
+        </p>
 
-        <motion.p
-          initial={{ opacity: 0, y: 14 }}
-          animate={inView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.7, delay: 0.24 }}
-          className="mb-9 max-w-md text-[15px] leading-[1.82] text-white/45"
-        >
-          Voice input powered by OpenAI Whisper. Voice output with 6 premium voices.
-          Choose your assistant&apos;s voice in settings.
-        </motion.p>
-
-        <FadeIn delay={0.35} className="flex flex-wrap justify-center gap-2">
-          {voices.map((name) => (
-            <span
-              key={name}
-              className="rounded-full border px-4 py-1.5 text-sm font-medium text-white/55 transition-colors hover:border-violet-500/45 hover:text-violet-300"
-              style={{ borderColor: "rgba(255,255,255,0.1)" }}
-            >
-              {name}
-            </span>
-          ))}
-        </FadeIn>
+        {/* CTA button */}
+        <div className="mt-8 flex justify-center">
+          <Link
+            href="/login"
+            className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[14px] font-semibold text-white transition-opacity hover:opacity-85"
+            style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)" }}
+          >
+            Try Prism Free
+            <ArrowRight size={15} />
+          </Link>
+        </div>
       </div>
     </section>
   );
@@ -1152,6 +2017,7 @@ export default function LandingPage() {
       <div className="min-h-screen overflow-x-hidden bg-black text-white selection:bg-violet-500/30">
         <Navbar />
         <HeroSection />
+        <LiveDemoSection />
         <MarqueeSection />
 
         <div id="lp-features">
@@ -1225,7 +2091,8 @@ export default function LandingPage() {
         </div>
 
         <AgentSection />
-        <VoiceSection />
+        <EvolvesWithYouSection />
+        <ComparisonSection />
         <StatsSection />
         <TestimonialSection />
         <FinalCTASection />
