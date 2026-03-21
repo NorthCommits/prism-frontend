@@ -116,6 +116,29 @@ export async function saveMessage(
   return handleResponse<Message>(response);
 }
 
+export interface SearchResult {
+  id: string;
+  title: string;
+  updated_at: string;
+  match_type: "title" | "message";
+  snippet?: string;
+  snippet_role?: string;
+}
+
+// Full-text conversation search — debounced on the call-site.
+export async function searchConversations(
+  query: string
+): Promise<SearchResult[]> {
+  if (!query.trim()) return [];
+  const headers = await getAuthHeader();
+  const response = await fetch(
+    `${API_URL}/api/v1/search?q=${encodeURIComponent(query)}`,
+    { headers }
+  );
+  if (!response.ok) return [];
+  return response.json();
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const headers = await getAuthHeader();
   const response = await fetch(

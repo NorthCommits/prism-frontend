@@ -19,6 +19,7 @@ import {
   PanelLeftClose,
   PenLine,
   Plus,
+  Loader2,
   Search,
   Sparkles,
   Sun,
@@ -26,6 +27,7 @@ import {
   Trash2,
   UserCircle,
   Wand2,
+  X,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -47,11 +49,13 @@ import { SplashScreen } from "@/components/SplashScreen";
 import { ToastContainer, ToastProvider, pushToast } from "@/components/Toast";
 import {
   Conversation,
+  SearchResult,
   deleteConversation,
   getConversations,
   getConversationMessages,
   createConversation,
   saveMessage,
+  searchConversations,
 } from "@/lib/history";
 import { createClient } from "@/lib/supabase";
 
@@ -125,6 +129,25 @@ function getConversationIconConfig(title: string): IconConfig {
   return ICON_CONFIGS.MessageCircle;
 }
 
+// Wraps occurrences of `query` inside `text` with a highlighted <mark> span.
+function highlightSnippet(text: string, query: string): React.ReactNode {
+  if (!query.trim() || !text) return text;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === query.toLowerCase() ? (
+      <mark
+        key={i}
+        className="rounded bg-violet-500/30 px-0.5 text-violet-200 not-italic"
+      >
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
 function formatRelativeTime(isoDate: string): string {
   const now = Date.now();
   const then = new Date(isoDate).getTime();
@@ -180,6 +203,12 @@ export default function Home() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // Sidebar conversation search.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchDebounceRef = useRef<number | null>(null);
 
   // Track whether the splash overlay should exist in the DOM at all.
   // Always starts as true so the server and first client render match (no
@@ -559,6 +588,34 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handler);
   }, [isProfileOpen]);
 
+  // Debounced sidebar search — fires 300 ms after the query stops changing.
+  useEffect(() => {
+    if (searchDebounceRef.current !== null) {
+      window.clearTimeout(searchDebounceRef.current);
+    }
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    searchDebounceRef.current = window.setTimeout(async () => {
+      try {
+        const results = await searchConversations(searchQuery);
+        setSearchResults(results.slice(0, 10));
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current !== null) {
+        window.clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [searchQuery]);
+
   const handleSend = async (
     message: string,
     file?: { file_name: string; file_type: string; file_content: string },
@@ -914,90 +971,216 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleCreateConversation}
-                  className="mb-4 relative overflow-hidden inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#2563eb] px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:brightness-110 hover:shadow-[0_0_25px_rgba(124,58,237,0.25)] before:absolute before:inset-0 before:-translate-x-full before:bg-gradient-to-r before:from-transparent before:via-white/25 before:to-transparent before:transition-transform before:duration-700 hover:before:translate-x-full"
+                  className="mb-3 relative overflow-hidden inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#2563eb] px-3 py-2 text-xs font-medium text-white shadow-sm transition-colors hover:brightness-110 hover:shadow-[0_0_25px_rgba(124,58,237,0.25)] before:absolute before:inset-0 before:-translate-x-full before:bg-gradient-to-r before:from-transparent before:via-white/25 before:to-transparent before:transition-transform before:duration-700 hover:before:translate-x-full"
                 >
                   <Plus className="size-4" />
                   <span>New Chat</span>
                 </button>
 
-                <div className="mb-2 px-3 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/50">
-                  Recent
+                {/* Search bar */}
+                <div className="relative mb-3">
+                  <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-muted-foreground/60">
+                    {isSearching ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Search className="size-3.5" />
+                    )}
+                  </span>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setSearchQuery("");
+                    }}
+                    placeholder="Search conversations…"
+                    className="h-9 w-full rounded-xl border border-border/50 bg-muted/30 pl-8 pr-8 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none transition-colors focus:border-[#7c3aed]/60 focus:ring-1 focus:ring-[#7c3aed]/30"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="absolute inset-y-0 right-2.5 flex items-center text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer"
+                      aria-label="Clear search"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  )}
                 </div>
 
+                {/* "Recent" label — hidden during search */}
+                {!searchQuery && (
+                  <div className="mb-2 px-3 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/50">
+                    Recent
+                  </div>
+                )}
+
                 <div className="sidebar-scroll flex-1 overflow-y-auto pb-2 text-xs">
-                  {isConversationsLoading ? (
-                    <div className="space-y-2 px-2 text-[11px] text-muted-foreground">
-                      <div className="h-4 w-full animate-pulse rounded bg-muted/60" />
-                      <div className="h-4 w-10/12 animate-pulse rounded bg-muted/60" />
-                      <div className="h-4 w-8/12 animate-pulse rounded bg-muted/60" />
-                    </div>
-                  ) : conversations.length === 0 ? (
-                    <p className="px-2 text-xs text-muted-foreground">
-                      No conversations yet
-                    </p>
-                  ) : (
-                    conversations.map((conversation) => {
-                      const isActive = conversation.id === activeConversationId;
-                      return (
-                        <div
-                          key={conversation.id}
-                          className={`group relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-left cursor-pointer transition-colors duration-200 overflow-hidden ${
-                            isActive
-                              ? "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]"
-                              : "bg-transparent after:content-[''] after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200"
-                          } ${conversation.id === newConversationId ? "prism-conv-enter" : ""} ${
-                            deletingConversationId === conversation.id
-                              ? deletingConversationStage === "out"
-                                ? "prism-conv-delete-out"
-                                : "prism-conv-delete-collapse"
-                              : ""
-                          } ${isActive ? "prism-conv-active" : ""}`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleOpenConversation(conversation.id)}
-                            className="flex min-w-0 flex-1 items-center gap-2"
+                  {/* ── Search results ── */}
+                  {searchQuery.trim() ? (
+                    isSearching ? (
+                      // Skeleton placeholders while the API is in flight.
+                      <div className="space-y-1 px-1">
+                        {[1, 2, 3].map((n) => (
+                          <div
+                            key={n}
+                            className="flex items-center gap-2 rounded-lg px-2 py-1.5"
                           >
-                            {/* Dynamic icon whose colour reflects the topic of the conversation */}
-                            {(() => {
-                              const cfg = getConversationIconConfig(conversation.title);
-                              const IconEl = cfg.icon;
-                              return (
-                                <span
-                                  className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
-                                    isActive
-                                      ? `${cfg.activeBg} ${cfg.activeColor}`
-                                      : `${cfg.bg} ${cfg.color}`
-                                  }`}
-                                  style={{ width: 24, height: 24 }}
-                                >
-                                  <IconEl className="size-3.5" />
-                                </span>
-                              );
-                            })()}
-                            <div className="min-w-0 text-left">
-                              <p className="line-clamp-1 text-foreground/90">
-                                {conversation.title}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground">
-                                {formatRelativeTime(conversation.updated_at)}
-                              </p>
+                            <div className="h-6 w-6 shrink-0 animate-pulse rounded-md bg-muted/60" />
+                            <div className="flex-1 space-y-1.5">
+                              <div className="h-3 w-4/5 animate-pulse rounded bg-muted/60" />
+                              <div className="h-2.5 w-3/5 animate-pulse rounded bg-muted/50" />
                             </div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleDeleteConversation(conversation.id);
+                          </div>
+                        ))}
+                      </div>
+                    ) : searchResults.length === 0 ? (
+                      // Empty state.
+                      <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                        <Search className="size-7 text-muted-foreground/30" />
+                        <p className="text-xs font-medium text-muted-foreground/70">
+                          No results for &ldquo;{searchQuery}&rdquo;
+                        </p>
+                        <p className="text-[10px] text-muted-foreground/40">
+                          Try different keywords
+                        </p>
+                      </div>
+                    ) : (
+                      // Result rows.
+                      searchResults.map((result) => {
+                        const isActive = result.id === activeConversationId;
+                        const cfg = getConversationIconConfig(result.title);
+                        const IconEl = cfg.icon;
+                        return (
+                          <div
+                            key={result.id}
+                            onClick={() => {
+                              handleOpenConversation(result.id);
+                              setSearchQuery("");
                             }}
-                            className="opacity-0 transition-opacity group-hover:opacity-100"
-                            aria-label="Delete conversation"
+                            className={`group relative flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 transition-colors duration-200 overflow-hidden ${
+                              isActive
+                                ? "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]"
+                                : "bg-transparent after:content-[''] after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200"
+                            }`}
                           >
-                            <Trash2 className="size-3.5 text-muted-foreground hover:text-foreground" />
-                          </button>
-                        </div>
-                      );
-                    })
+                            {/* Coloured topic icon */}
+                            <span
+                              className={`mt-0.5 flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
+                                isActive
+                                  ? `${cfg.activeBg} ${cfg.activeColor}`
+                                  : `${cfg.bg} ${cfg.color}`
+                              }`}
+                              style={{ width: 24, height: 24 }}
+                            >
+                              <IconEl className="size-3.5" />
+                            </span>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <p className="line-clamp-1 flex-1 text-foreground/90">
+                                  {result.title}
+                                </p>
+                                {/* Match-type badge */}
+                                <span
+                                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${
+                                    result.match_type === "title"
+                                      ? "bg-blue-500/15 text-blue-400"
+                                      : "bg-violet-500/15 text-violet-400"
+                                  }`}
+                                >
+                                  {result.match_type === "title"
+                                    ? "title"
+                                    : "message"}
+                                </span>
+                              </div>
+                              {/* Snippet with highlighted query */}
+                              {result.snippet && (
+                                <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">
+                                  {highlightSnippet(result.snippet, searchQuery)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )
+                  ) : (
+                    /* ── Normal conversation list ── */
+                    isConversationsLoading ? (
+                      <div className="space-y-2 px-2 text-[11px] text-muted-foreground">
+                        <div className="h-4 w-full animate-pulse rounded bg-muted/60" />
+                        <div className="h-4 w-10/12 animate-pulse rounded bg-muted/60" />
+                        <div className="h-4 w-8/12 animate-pulse rounded bg-muted/60" />
+                      </div>
+                    ) : conversations.length === 0 ? (
+                      <p className="px-2 text-xs text-muted-foreground">
+                        No conversations yet
+                      </p>
+                    ) : (
+                      conversations.map((conversation) => {
+                        const isActive = conversation.id === activeConversationId;
+                        return (
+                          <div
+                            key={conversation.id}
+                            className={`group relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-left cursor-pointer transition-colors duration-200 overflow-hidden ${
+                              isActive
+                                ? "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]"
+                                : "bg-transparent after:content-[''] after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200"
+                            } ${conversation.id === newConversationId ? "prism-conv-enter" : ""} ${
+                              deletingConversationId === conversation.id
+                                ? deletingConversationStage === "out"
+                                  ? "prism-conv-delete-out"
+                                  : "prism-conv-delete-collapse"
+                                : ""
+                            } ${isActive ? "prism-conv-active" : ""}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleOpenConversation(conversation.id)}
+                              className="flex min-w-0 flex-1 items-center gap-2"
+                            >
+                              {/* Dynamic icon whose colour reflects the topic of the conversation */}
+                              {(() => {
+                                const cfg = getConversationIconConfig(conversation.title);
+                                const IconEl = cfg.icon;
+                                return (
+                                  <span
+                                    className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
+                                      isActive
+                                        ? `${cfg.activeBg} ${cfg.activeColor}`
+                                        : `${cfg.bg} ${cfg.color}`
+                                    }`}
+                                    style={{ width: 24, height: 24 }}
+                                  >
+                                    <IconEl className="size-3.5" />
+                                  </span>
+                                );
+                              })()}
+                              <div className="min-w-0 text-left">
+                                <p className="line-clamp-1 text-foreground/90">
+                                  {conversation.title}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {formatRelativeTime(conversation.updated_at)}
+                                </p>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDeleteConversation(conversation.id);
+                              }}
+                              className="opacity-0 transition-opacity group-hover:opacity-100"
+                              aria-label="Delete conversation"
+                            >
+                              <Trash2 className="size-3.5 text-muted-foreground hover:text-foreground" />
+                            </button>
+                          </div>
+                        );
+                      })
+                    )
                   )}
                 </div>
 
