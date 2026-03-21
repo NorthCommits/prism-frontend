@@ -26,6 +26,10 @@ export interface ChatMessage {
   // Set to true when the response was produced by the multi-step agent.
   is_agent?: boolean;
   agent_step_count?: number;
+  // Active prompt template id for this turn (echoed from the request).
+  active_template?: string;
+  // Pre-formatted display label ("{icon} {title}") — set locally, not from backend.
+  active_template_label?: string;
 }
 
 export interface ChatResponse {
@@ -39,6 +43,7 @@ export interface ChatResponse {
   image_used?: boolean;
   is_agent?: boolean;
   agent_step_count?: number;
+  active_template?: string;
   response_type?: "text" | "plot" | "image";
   plot_json?: object;
   image_url?: string;
@@ -146,6 +151,8 @@ export async function sendMessageStream(
   // Base64-encoded image for vision requests (not stored in conversation history).
   image_base64?: string,
   image_media_type?: string,
+  // Active prompt template id to apply on this turn.
+  active_template?: string,
   // Optional agent-mode progress callbacks.
   onAgentPlan?: (steps: string[], total: number) => void,
   onAgentStepStart?: (step: number, total: number, title: string) => void,
@@ -165,6 +172,7 @@ export async function sendMessageStream(
         user_id,
         image_base64,
         image_media_type,
+        active_template,
       }),
     });
 

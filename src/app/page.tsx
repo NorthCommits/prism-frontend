@@ -438,7 +438,8 @@ export default function Home() {
   const handleSend = async (
     message: string,
     file?: { file_name: string; file_type: string; file_content: string },
-    image?: { base64: string; mediaType: string }
+    image?: { base64: string; mediaType: string },
+    template?: { id: string; label: string }
   ) => {
     if (!selectedModel) {
       return;
@@ -520,6 +521,9 @@ export default function Home() {
       content: "",
       model_id: selectedModel,
       isStreaming: true,
+      // Store the pre-formatted label so ChatWindow can render the badge without
+      // waiting for the backend to echo the template id back.
+      active_template_label: template?.label,
     };
 
     const initialMessages = [...userMessages, assistantPlaceholder];
@@ -571,6 +575,8 @@ export default function Home() {
                 image_used: metadata.image_used,
                 is_agent: metadata.is_agent,
                 agent_step_count: metadata.agent_step_count,
+                // Keep the pre-set label; backend echo is optional.
+                active_template_label: m.active_template_label ?? (metadata as Record<string, unknown>).active_template_label as string | undefined,
                 response_type: metadata.response_type,
                 plot_json: metadata.plot_json,
                 image_url: metadata.image_url,
@@ -637,6 +643,8 @@ export default function Home() {
         // Vision: base64 image for this turn only (not stored in history).
         image?.base64,
         image?.mediaType,
+        // Prompt template id for this turn.
+        template?.id,
         // Agent-mode progress callbacks.
         (steps, total) => {
           setIsAgentMode(true);

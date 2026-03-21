@@ -9,17 +9,34 @@ import {
 } from "react";
 import {
   ArrowUpRight,
-  ImageIcon,
-  Paperclip,
-  X,
-  FileText,
-  FileSpreadsheet,
+  BookOpen,
+  CheckSquare,
   FileCode,
+  FileSpreadsheet,
+  FileText,
+  ImageIcon,
+  LucideProps,
+  Lightbulb,
+  Paperclip,
+  Search,
+  Sparkles,
+  X,
 } from "lucide-react";
+
+// Maps the icon name strings returned by the backend to Lucide components.
+const ICON_MAP: Record<string, React.ComponentType<LucideProps>> = {
+  Lightbulb,
+  Search,
+  CheckSquare,
+  FileText,
+  Sparkles,
+  BookOpen,
+};
 
 import { Button } from "@/components/ui/button";
 import type { AvailableModel, ModelId, ParsedFile } from "../lib/api";
 import { parseFile } from "../lib/api";
+import { getTemplates, Template } from "../lib/templates";
 import { useToast } from "@/components/Toast";
 
 type AttachedFile = ParsedFile & {
@@ -38,7 +55,9 @@ type ChatInputProps = {
   onSend: (
     message: string,
     file?: { file_name: string; file_type: string; file_content: string },
-    image?: { base64: string; mediaType: string }
+    image?: { base64: string; mediaType: string },
+    // Template id for the backend and a pre-formatted display label.
+    template?: { id: string; label: string }
   ) => void;
   isLoading: boolean;
   /** Last sent user message for ArrowUp history navigation. */
@@ -63,14 +82,68 @@ export function ChatInput({
   const textareaRef = inputRef ?? internalRef;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const slashPopupRef = useRef<HTMLDivElement | null>(null);
+
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [attachedImage, setAttachedImage] = useState<AttachedImage | null>(null);
+
+  // Prompt template state
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
+  // When true the popup is suppressed even if the value starts with "/".
+  const [slashMenuHidden, setSlashMenuHidden] = useState(false);
+  const [slashHighlightIdx, setSlashHighlightIdx] = useState(0);
+
   const { addToast } = useToast();
   const [historyNavActive, setHistoryNavActive] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [isInputShaking, setIsInputShaking] = useState(false);
   const [isSuccessFlash, setIsSuccessFlash] = useState(false);
   const prevIsLoadingRef = useRef<boolean>(isLoading);
+
+  // Fetch templates once on mount.
+  useEffect(() => {
+    getTemplates().then(setTemplates).catch(() => {});
+  }, []);
+
+  // ── Slash command derived state ──────────────────────────────────────────
+
+  const slashIsActive = value.startsWith("/") && !value.includes(" ");
+  const slashQuery = slashIsActive ? value.slice(1).toLowerCase() : "";
+
+  const filteredTemplates = slashIsActive
+    ? slashQuery === ""
+      ? templates
+      : templates.filter(
+          (t) =>
+            t.command.replace(/^\//, "").startsWith(slashQuery) ||
+            t.title.toLowerCase().startsWith(slashQuery)
+        )
+    : [];
+
+  // Keep highlight index in bounds after filtering.
+  const clampedIdx = Math.min(slashHighlightIdx, Math.max(0, filteredTemplates.length - 1));
+  const slashMenuOpen = slashIsActive && filteredTemplates.length > 0 && !slashMenuHidden;
+
+  // Reset hidden flag and highlight whenever the user types.
+  useEffect(() => {
+    setSlashMenuHidden(false);
+    setSlashHighlightIdx(0);
+  }, [value]);
+
+  // Scroll the highlighted row into view during keyboard navigation.
+  useEffect(() => {
+    if (!slashPopupRef.current || !slashMenuOpen) return;
+    const el = slashPopupRef.current.querySelector<HTMLElement>(`[data-idx="${clampedIdx}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [clampedIdx, slashMenuOpen]);
+
+  // Applies a template: stores it as active, clears the slash input, closes the popup.
+  const selectTemplate = (template: Template) => {
+    setActiveTemplate(template);
+    setSlashMenuHidden(true);
+    onChangeValue("");
+  };
 
   // Resize textarea as the user types for better multi-line experience.
   const autoResize = () => {
@@ -111,6 +184,11 @@ export function ChatInput({
       ? { base64: attachedImage.base64, mediaType: attachedImage.mediaType }
       : undefined;
 
+    // Build the template payload: id for the backend, pre-formatted label for display.
+    const templatePayload = activeTemplate
+      ? { id: activeTemplate.id, label: `${activeTemplate.icon} ${activeTemplate.title}` }
+      : undefined;
+
     if (attachedFile && attachedFile.status === "idle") {
       onSend(
         trimmed,
@@ -119,17 +197,44 @@ export function ChatInput({
           file_type: attachedFile.file_type,
           file_content: attachedFile.content,
         },
-        imagePayload
+        imagePayload,
+        templatePayload
       );
       setAttachedFile(null);
     } else {
-      onSend(trimmed, undefined, imagePayload);
+      onSend(trimmed, undefined, imagePayload, templatePayload);
     }
     setAttachedImage(null);
+    setActiveTemplate(null);
     onChangeValue("");
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Slash-command popup captures arrow keys, Enter, and Escape first.
+    if (slashMenuOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashHighlightIdx((i) => Math.min(i + 1, filteredTemplates.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashHighlightIdx((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const tpl = filteredTemplates[clampedIdx];
+        if (tpl) selectTemplate(tpl);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashMenuHidden(true);
+        return;
+      }
+    }
+
     if (event.key === "ArrowUp") {
       if (lastSentMessage && !isLoading) {
         event.preventDefault();
@@ -256,7 +361,108 @@ export function ChatInput({
       className="pointer-events-auto border-t bg-background/80 backdrop-blur"
     >
       <div className="mx-auto flex w-full max-w-2xl items-end gap-2.5 px-4 py-4">
-        <div className="flex-1 rounded-2xl border bg-card/95 px-3.5 py-2.5 shadow-lg">
+        {/*
+          relative so the slash popup can use absolute positioning inside this box
+          and match its width exactly.
+        */}
+        <div className="relative flex-1 rounded-2xl border bg-card/95 px-3.5 py-2.5 shadow-lg">
+
+          {/* Slash-command popup */}
+          {slashMenuOpen && (
+            <div
+              ref={slashPopupRef}
+              className="absolute bottom-full left-0 right-0 mb-2 max-h-80 overflow-y-auto rounded-2xl border bg-background/95 shadow-xl backdrop-blur-sm animate-[spring-in_180ms_cubic-bezier(0.16,1,0.3,1)_forwards]"
+              style={{ zIndex: 50 }}
+            >
+              <p className="sticky top-0 border-b bg-background/95 px-3 py-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                Prompt Templates
+              </p>
+              {filteredTemplates.map((tpl, idx) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  data-idx={idx}
+                  // onMouseDown + preventDefault keeps textarea focused so blur
+                  // doesn't fire and close the menu before the click registers.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    selectTemplate(tpl);
+                  }}
+                  className={`flex w-full cursor-pointer items-start gap-3 px-3 py-2.5 text-left transition-colors ${
+                    idx === clampedIdx
+                      ? "bg-[#7c3aed]/10 dark:bg-[#7c3aed]/15"
+                      : "hover:bg-muted/50"
+                  }`}
+                >
+                  {(() => {
+                    const IconComponent = ICON_MAP[tpl.icon];
+                    return (
+                      <span
+                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-purple-500/10 ${
+                          idx === clampedIdx
+                            ? "text-purple-300"
+                            : "text-purple-400"
+                        }`}
+                      >
+                        {IconComponent ? (
+                          <IconComponent size={16} />
+                        ) : (
+                          // Fallback for unknown icon names.
+                          <span className="text-xs">{tpl.icon}</span>
+                        )}
+                      </span>
+                    );
+                  })()}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs font-medium text-[#7c3aed] dark:text-[#c4b5fd]">
+                        {tpl.command}
+                      </code>
+                      <span className="text-xs font-medium text-foreground">
+                        {tpl.title}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {tpl.description}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Active template chip */}
+          {activeTemplate && (
+            <div className="mb-2 prism-file-chip-appear inline-flex w-full items-center justify-between gap-2 rounded-xl border border-[#7c3aed]/30 bg-gradient-to-r from-[#7c3aed]/10 to-[#2563eb]/10 px-3 py-1.5 text-[11px] text-foreground dark:from-[#7c3aed]/15 dark:to-[#2563eb]/15">
+              <div className="flex min-w-0 items-center gap-2">
+                {(() => {
+                  const IconComponent = ICON_MAP[activeTemplate.icon];
+                  return (
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-purple-500/10 text-purple-400">
+                      {IconComponent ? (
+                        <IconComponent size={16} />
+                      ) : (
+                        <span className="text-xs">{activeTemplate.icon}</span>
+                      )}
+                    </span>
+                  );
+                })()}
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{activeTemplate.title}</p>
+                  <p className="text-[10px] text-muted-foreground">Prompt template active</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTemplate(null)}
+                className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-transparent text-muted-foreground hover:border-border hover:bg-background"
+                aria-label="Remove template"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
+
           {/* Image preview chip */}
           {attachedImage && (
             <div className="mb-2 prism-file-chip-appear inline-flex w-full items-center justify-between gap-2 rounded-xl border border-[#7c3aed33] bg-[#f5f3ff] px-2 py-1.5 text-[11px] text-foreground dark:bg-[#1f1633]">
@@ -362,6 +568,10 @@ export function ChatInput({
             value={value}
             onChange={(event) => onChangeValue(event.target.value)}
             onKeyDown={handleKeyDown}
+            onBlur={() =>
+              // Short delay so onMouseDown on popup rows fires before blur hides the menu.
+              window.setTimeout(() => setSlashMenuHidden(true), 150)
+            }
             rows={1}
             placeholder="Message Prism..."
             className={`flex w-full resize-none bg-transparent text-[15px] leading-relaxed text-foreground placeholder:text-[15px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7c3aed] focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_rgba(124,58,237,0.1)] ${

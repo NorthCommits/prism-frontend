@@ -698,6 +698,14 @@ export function ChatWindow(props: ChatWindowProps) {
                 </div>
               )}
 
+              {!isUser && (chatMessage as ChatMessage & { active_template_label?: string }).active_template_label && (
+                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[#7c3aed]/20 bg-gradient-to-r from-[#7c3aed]/10 to-[#2563eb]/10 px-3 py-1.5 text-[11px] leading-snug text-[#7c3aed] dark:from-[#7c3aed]/15 dark:to-[#2563eb]/15 dark:text-[#c4b5fd]">
+                  <span>
+                    {(chatMessage as ChatMessage & { active_template_label?: string }).active_template_label}
+                  </span>
+                </div>
+              )}
+
               {!isUser && (
                 <div className="mt-1 flex w-full justify-end opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                   <div className="flex items-center gap-1.5 text-xs" ref={menuRef}>
