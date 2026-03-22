@@ -89,3 +89,71 @@ export async function deleteMemory(id: string): Promise<void> {
     headers,
   });
 }
+
+// ─── Conversation scores / productivity dashboard ─────────────────────────────
+
+export interface ScoresSummary {
+  total_conversations: number;
+  avg_productivity: number;
+  avg_complexity: number;
+  avg_satisfaction: number;
+  total_time_saved_minutes: number;
+  total_time_saved_hours: number;
+  total_messages: number;
+  category_breakdown: Record<string, number>;
+  top_topics: { topic: string; count: number }[];
+  daily_scores: {
+    date: string;
+    count: number;
+    avg_productivity: number;
+    time_saved: number;
+  }[];
+  weekly_report: {
+    conversations: number;
+    avg_productivity: number;
+    time_saved_minutes: number;
+    time_saved_hours: number;
+    top_category: string;
+    best_day: string;
+  } | null;
+  best_day: string | null;
+  days: number;
+}
+
+export interface ConversationScore {
+  id: string;
+  conversation_id: string;
+  productivity_score: number;
+  complexity_score: number;
+  satisfaction_score: number;
+  category: string;
+  topics: string[];
+  time_saved_minutes: number;
+  summary: string;
+  message_count: number;
+  scored_at: string;
+}
+
+export async function getScoresSummary(
+  days: number = 30
+): Promise<ScoresSummary | null> {
+  const headers = await getAuthHeader();
+  const response = await fetch(
+    `${API_URL}/api/v1/scores/summary?days=${days}`,
+    { headers }
+  );
+  if (!response.ok) return null;
+  return response.json();
+}
+
+export async function getRecentScores(
+  limit: number = 10
+): Promise<ConversationScore[]> {
+  const headers = await getAuthHeader();
+  const response = await fetch(
+    `${API_URL}/api/v1/scores/recent?limit=${limit}`,
+    { headers }
+  );
+  if (!response.ok) return [];
+  return response.json();
+}

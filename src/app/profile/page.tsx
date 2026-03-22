@@ -27,6 +27,7 @@ import {
   UserProfile,
   ResponseStyle,
 } from "@/lib/profile";
+import { ProductivityDashboard } from "@/components/ProductivityDashboard";
 import { ToastContainer, ToastProvider, pushToast } from "@/components/Toast";
 
 // ─── Response-style option definitions ───────────────────────────────────────
@@ -481,6 +482,8 @@ export default function ProfilePage() {
           </div>
 
           <div className="space-y-4">
+            <ProductivityDashboard authReady={!isAuthLoading} />
+
             {/* ── A. Personal Info ──────────────────────────────────────── */}
             <SectionCard title="Personal Info">
               <div className="space-y-1.5">
