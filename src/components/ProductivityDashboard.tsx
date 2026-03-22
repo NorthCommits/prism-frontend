@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { motion, useInView } from "motion/react";
 import {
@@ -106,21 +107,21 @@ function useAnimatedNumber(
 function DashboardSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="h-36 animate-pulse rounded-2xl bg-white/[0.05]" />
+      <div className="h-36 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/5" />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="h-[120px] animate-pulse rounded-2xl bg-white/[0.05]"
+            className="h-[120px] animate-pulse rounded-2xl bg-gray-100 dark:bg-white/5"
           />
         ))}
       </div>
-      <div className="h-[200px] animate-pulse rounded-2xl bg-white/[0.05]" />
+      <div className="h-[200px] animate-pulse rounded-2xl bg-gray-100 dark:bg-white/5" />
       <div className="space-y-2">
         {Array.from({ length: 5 }).map((_, i) => (
           <div
             key={i}
-            className="h-8 animate-pulse rounded-lg bg-white/[0.05]"
+            className="h-8 animate-pulse rounded-lg bg-gray-100 dark:bg-white/5"
             style={{ transitionDelay: `${i * 0.1}s` }}
           />
         ))}
@@ -129,7 +130,7 @@ function DashboardSkeleton() {
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="h-7 w-24 animate-pulse rounded-full bg-white/[0.05]"
+            className="h-7 w-24 animate-pulse rounded-full bg-gray-100 dark:bg-white/5"
           />
         ))}
       </div>
@@ -137,7 +138,7 @@ function DashboardSkeleton() {
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className="h-24 animate-pulse rounded-2xl bg-white/[0.05]"
+            className="h-24 animate-pulse rounded-2xl bg-gray-100 dark:bg-white/5"
           />
         ))}
       </div>
@@ -150,23 +151,17 @@ function WeeklyReportCard({ report }: { report: NonNullable<ScoresSummary["weekl
     report.time_saved_hours ??
     Math.round((report.time_saved_minutes / 60) * 10) / 10;
   return (
-    <div
-      className="relative overflow-hidden rounded-2xl border border-[rgba(139,92,246,0.2)] border-l-4 border-l-violet-500 p-5 shadow-[0_0_40px_rgba(139,92,246,0.12)]"
-      style={{
-        background: "rgba(12,12,18,0.75)",
-        backdropFilter: "blur(12px)",
-        borderLeftColor: "#8b5cf6",
-      }}
-    >
-      <p className="mb-3 text-sm font-semibold text-white">
-        <span className="text-violet-400">✦</span> This Week&apos;s Report
+    <div className="relative overflow-hidden rounded-2xl border border-purple-500/30 border-l-4 border-l-violet-500 bg-purple-50 p-5 shadow-[0_0_40px_rgba(139,92,246,0.08)] backdrop-blur-sm dark:border-purple-500/20 dark:bg-purple-500/5 dark:shadow-[0_0_40px_rgba(139,92,246,0.12)]">
+      <p className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+        <span className="text-violet-600 dark:text-violet-400">✦</span> This
+        Week&apos;s Report
       </p>
-      <p className="mb-3 text-[15px] text-white/80">
+      <p className="mb-3 text-[15px] text-gray-700 dark:text-white/80">
         {report.conversations} conversations{" "}
-        <span className="text-white/30">·</span> Avg{" "}
+        <span className="text-gray-400 dark:text-white/30">·</span> Avg{" "}
         {report.avg_productivity.toFixed(1)}/10
       </p>
-      <div className="space-y-2 text-sm text-white/55">
+      <div className="space-y-2 text-sm text-gray-600 dark:text-white/60">
         <p>
           <span className="mr-1.5">⏱</span>
           {h} hours saved
@@ -174,12 +169,16 @@ function WeeklyReportCard({ report }: { report: NonNullable<ScoresSummary["weekl
         <p>
           <span className="mr-1.5">🎯</span>
           Top category:{" "}
-          <span className="capitalize text-white/80">{report.top_category}</span>
+          <span className="capitalize text-gray-800 dark:text-white/80">
+            {report.top_category}
+          </span>
         </p>
         <p>
           <span className="mr-1.5">📅</span>
           Most productive:{" "}
-          <span className="text-white/80">{report.best_day}</span>
+          <span className="text-gray-800 dark:text-white/80">
+            {report.best_day}
+          </span>
         </p>
       </div>
     </div>
@@ -192,7 +191,7 @@ function StatCard({
   label,
   subtext,
   valueDisplay,
-  valueClassName = "text-white",
+  valueClassName = "text-gray-900 dark:text-white",
 }: {
   icon: React.ComponentType<{ className?: string }>;
   iconBg: string;
@@ -202,10 +201,7 @@ function StatCard({
   valueClassName?: string;
 }) {
   return (
-    <div
-      className="rounded-2xl border border-white/[0.06] p-5"
-      style={{ background: "rgba(255,255,255,0.03)" }}
-    >
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-black/20">
       <div
         className="mb-3 flex h-10 w-10 items-center justify-center rounded-full"
         style={{ background: iconBg }}
@@ -217,8 +213,12 @@ function StatCard({
       >
         {valueDisplay}
       </p>
-      <p className="mt-2 text-xs font-medium text-white/45">{label}</p>
-      <p className="mt-0.5 text-[11px] text-white/30">{subtext}</p>
+      <p className="mt-2 text-xs font-medium text-gray-600 dark:text-white/60">
+        {label}
+      </p>
+      <p className="mt-0.5 text-[11px] text-gray-400 dark:text-white/30">
+        {subtext}
+      </p>
     </div>
   );
 }
@@ -238,12 +238,15 @@ function ProductivityChart({
   data: ChartRow[];
   gradientId: string;
 }) {
+  const { resolvedTheme } = useTheme();
+  const gridStroke =
+    resolvedTheme === "dark" ? "rgba(255,255,255,0.05)" : "#e5e7eb";
+  const axisLineStroke =
+    resolvedTheme === "dark" ? "rgba(255,255,255,0.1)" : "#d1d5db";
+
   if (data.length === 0) {
     return (
-      <div
-        className="flex h-[200px] items-center justify-center rounded-2xl border border-white/[0.06] text-sm text-white/40"
-        style={{ background: "rgba(255,255,255,0.02)" }}
-      >
+      <div className="flex h-[200px] items-center justify-center rounded-2xl border border-gray-200 bg-gray-50 text-sm text-gray-500 dark:border-white/10 dark:bg-white/[0.02] dark:text-white/40">
         Not enough data yet. Start chatting!
       </div>
     );
@@ -259,16 +262,16 @@ function ProductivityChart({
               <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+          <CartesianGrid stroke={gridStroke} vertical={false} />
           <XAxis
             dataKey="dateKey"
-            tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
-            axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+            tick={{ fill: "#6b7280", fontSize: 10 }}
+            axisLine={{ stroke: axisLineStroke }}
             tickLine={false}
           />
           <YAxis
             domain={[0, 10]}
-            tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
+            tick={{ fill: "#6b7280", fontSize: 10 }}
             axisLine={false}
             tickLine={false}
             width={28}
@@ -278,24 +281,23 @@ function ProductivityChart({
               if (!active || !payload?.length) return null;
               const row = payload[0].payload as ChartRow;
               return (
-                <div
-                  className="rounded-lg border border-violet-500/40 px-3 py-2 text-xs shadow-lg"
-                  style={{ background: "rgba(10,10,14,0.95)" }}
-                >
-                  <p className="mb-1 font-medium text-white">{label}</p>
-                  <p className="text-white/70">
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 shadow-lg dark:border-white/10 dark:bg-black/80 dark:text-white">
+                  <p className="mb-1 font-medium">{label}</p>
+                  <p className="text-gray-600 dark:text-white/70">
                     Productivity:{" "}
-                    <span className="text-violet-300">
+                    <span className="text-violet-600 dark:text-violet-300">
                       {Number(row.avg_productivity).toFixed(1)}
                     </span>
                   </p>
-                  <p className="text-white/70">
+                  <p className="text-gray-600 dark:text-white/70">
                     Conversations:{" "}
-                    <span className="text-cyan-300">{row.count}</span>
+                    <span className="text-cyan-600 dark:text-cyan-300">
+                      {row.count}
+                    </span>
                   </p>
-                  <p className="text-white/70">
+                  <p className="text-gray-600 dark:text-white/70">
                     Time saved:{" "}
-                    <span className="text-emerald-300">
+                    <span className="text-emerald-600 dark:text-emerald-300">
                       {row.time_saved >= 60
                         ? `${(row.time_saved / 60).toFixed(1)}h`
                         : `${Math.round(row.time_saved)}m`}
@@ -347,7 +349,9 @@ function CategoryBars({
 
   if (entries.length === 0) {
     return (
-      <p className="text-sm text-white/35">No categories yet for this range.</p>
+      <p className="text-sm text-gray-500 dark:text-white/40">
+        No categories yet for this range.
+      </p>
     );
   }
 
@@ -355,10 +359,10 @@ function CategoryBars({
     <div className="space-y-3">
       {entries.map((row, i) => (
         <div key={row.name} className="flex items-center gap-3">
-          <span className="w-[120px] shrink-0 text-xs capitalize text-white/70">
+          <span className="w-[120px] shrink-0 text-xs capitalize text-gray-700 dark:text-white/70">
             {row.name}
           </span>
-          <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-white/5">
             <div
               className="h-full rounded-full transition-[width] duration-700 ease-out"
               style={{
@@ -368,7 +372,7 @@ function CategoryBars({
               }}
             />
           </div>
-          <span className="w-16 shrink-0 text-right text-xs text-white/40">
+          <span className="w-16 shrink-0 text-right text-xs text-gray-500 dark:text-white/40">
             {row.count} {row.count === 1 ? "conv" : "convs"}
           </span>
         </div>
@@ -382,18 +386,18 @@ function DashboardEmpty({ onStart }: { onStart: () => void }) {
     <div className="space-y-8">
       <div className="flex flex-col items-center text-center">
         <BarChart2 className="mb-4 size-[60px] text-violet-500/90" />
-        <h3 className="text-lg font-semibold text-white">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           Your insights will appear here
         </h3>
-        <p className="mt-2 max-w-md text-sm leading-relaxed text-white/45">
+        <p className="mt-2 max-w-md text-sm leading-relaxed text-gray-600 dark:text-white/60">
           Have a few conversations with Prism and your productivity dashboard will
           come to life. We analyze each conversation automatically.
         </p>
       </div>
 
       <div className="relative grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/25 backdrop-blur-[2px]">
-          <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-medium text-white/70">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/60 backdrop-blur-[2px] dark:bg-black/25">
+          <span className="rounded-full border border-gray-200 bg-gray-100 px-4 py-1.5 text-xs font-medium text-gray-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
             Coming soon
           </span>
         </div>
@@ -401,12 +405,13 @@ function DashboardEmpty({ onStart }: { onStart: () => void }) {
           (t) => (
             <div
               key={t}
-              className="rounded-2xl border border-white/[0.06] p-4 opacity-40 blur-[1px]"
-              style={{ background: "rgba(255,255,255,0.03)" }}
+              className="rounded-2xl border border-gray-200 bg-gray-50 p-4 opacity-40 blur-[1px] dark:border-white/10 dark:bg-white/[0.03]"
             >
-              <div className="mb-2 h-8 w-8 rounded-full bg-white/10" />
-              <p className="text-xl font-bold text-white/50">—</p>
-              <p className="text-[11px] text-white/35">{t}</p>
+              <div className="mb-2 h-8 w-8 rounded-full bg-gray-200 dark:bg-white/10" />
+              <p className="text-xl font-bold text-gray-400 dark:text-white/50">
+                —
+              </p>
+              <p className="text-[11px] text-gray-500 dark:text-white/40">{t}</p>
             </div>
           )
         )}
@@ -525,7 +530,7 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
             className={`rounded-full border px-4 py-1.5 text-xs font-medium transition ${
               days === d
                 ? "border-transparent bg-gradient-to-r from-[#7c3aed] to-[#2563eb] text-white shadow-md"
-                : "border-border text-muted-foreground hover:border-white/20 hover:text-foreground"
+                : "border-gray-300 text-gray-500 hover:border-gray-400 hover:text-gray-700 dark:border-white/10 dark:text-white/40 dark:hover:border-white/20 dark:hover:text-foreground"
             }`}
           >
             {d} days
@@ -536,7 +541,7 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
       {loading && <DashboardSkeleton />}
 
       {!loading && loadFailed && (
-        <p className="rounded-2xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 text-sm text-white/50">
+        <p className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500 dark:border-white/10 dark:bg-white/[0.03] dark:text-white/50">
           Couldn&apos;t load productivity insights. Try again later.
         </p>
       )}
@@ -585,21 +590,23 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
           </div>
 
           <div>
-            <p className="mb-3 text-xs font-medium text-white/50">
+            <p className="mb-3 text-xs font-medium text-gray-500 dark:text-white/50">
               Daily Productivity
             </p>
             <ProductivityChart data={chartData} gradientId={chartGradientId} />
           </div>
 
           <div>
-            <p className="mb-3 text-xs font-medium text-white/50">
+            <p className="mb-3 text-xs font-medium text-gray-500 dark:text-white/50">
               By category
             </p>
             <CategoryBars breakdown={summary.category_breakdown ?? {}} />
           </div>
 
           <div>
-            <p className="mb-3 text-xs font-medium text-white/50">Top Topics</p>
+            <p className="mb-3 text-xs font-medium text-gray-500 dark:text-white/50">
+              Top Topics
+            </p>
             <div className="flex flex-wrap gap-2">
               {(summary.top_topics ?? []).map((t, i) => {
                 const c = TOPIC_PILL_COLORS[i % TOPIC_PILL_COLORS.length];
@@ -610,15 +617,16 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true, amount: 0.5 }}
                     transition={{ delay: i * 0.06, duration: 0.35 }}
-                    className="rounded-full border border-white/[0.08] px-3 py-1 text-[12px] text-white/85"
+                    className="rounded-full border border-gray-200 bg-gray-100 px-3 py-1 text-[12px] text-gray-800 dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-white/85"
                     style={{
-                      background: "rgba(255,255,255,0.06)",
                       borderLeftWidth: 3,
                       borderLeftColor: c,
                     }}
                   >
                     {t.topic}{" "}
-                    <span className="text-white/45">×{t.count}</span>
+                    <span className="text-gray-500 dark:text-white/45">
+                      ×{t.count}
+                    </span>
                   </motion.span>
                 );
               })}
@@ -626,13 +634,13 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
           </div>
 
           <div>
-            <p className="mb-3 text-xs font-medium text-white/50">
+            <p className="mb-3 text-xs font-medium text-gray-500 dark:text-white/50">
               Recent Activity
             </p>
             {recent.length === 0 ? (
-              <div className="flex flex-col items-center gap-3 rounded-2xl border border-white/[0.06] py-10 text-center">
-                <BarChart2 className="size-12 text-white/20" />
-                <p className="max-w-xs text-sm text-white/45">
+              <div className="flex flex-col items-center gap-3 rounded-2xl border border-gray-200 py-10 text-center dark:border-white/10">
+                <BarChart2 className="size-12 text-gray-300 dark:text-white/20" />
+                <p className="max-w-xs text-sm text-gray-500 dark:text-white/45">
                   No activity yet. Start chatting to see your productivity
                   insights!
                 </p>
@@ -646,8 +654,7 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
                     onClick={() =>
                       router.push(`/?conversation=${item.conversation_id}`)
                     }
-                    className="w-full cursor-pointer rounded-2xl border border-white/[0.06] p-4 text-left transition hover:border-violet-500/30 hover:bg-white/[0.04]"
-                    style={{ background: "rgba(255,255,255,0.02)" }}
+                    className="w-full cursor-pointer rounded-2xl border border-gray-200 bg-gray-50 p-4 text-left transition hover:bg-gray-100 dark:border-white/10 dark:bg-white/[0.02] dark:hover:border-violet-500/30 dark:hover:bg-white/5"
                   >
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <span
@@ -661,19 +668,19 @@ export function ProductivityDashboard({ authReady }: { authReady: boolean }) {
                         {item.category}
                       </span>
                     </div>
-                    <p className="line-clamp-2 text-sm text-white/55">
+                    <p className="line-clamp-2 text-sm text-gray-600 dark:text-white/60">
                       {item.summary || "Conversation"}
                     </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-x-2 text-[11px] text-cyan-400/90">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2 text-[11px] text-cyan-600 dark:text-cyan-400/90">
                       <span>
                         🕐 {item.time_saved_minutes} min saved
                       </span>
-                      <span className="text-white/25">·</span>
+                      <span className="text-gray-300 dark:text-white/25">·</span>
                       <span>
                         Productivity: {item.productivity_score}/10
                       </span>
                     </div>
-                    <p className="mt-1 text-right text-[10px] text-white/35">
+                    <p className="mt-1 text-right text-[10px] text-gray-400 dark:text-white/35">
                       {formatRelativePast(item.scored_at)}
                     </p>
                   </button>

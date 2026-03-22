@@ -422,8 +422,9 @@ export function ChatWindow(props: ChatWindowProps) {
     onEditMessage,
   } = props;
   const { addToast } = useToast();
-  // Scroll container ref to keep view pinned to bottom.
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const NEAR_BOTTOM_PX = 150;
+  const messagesContainerRef = useRef<HTMLElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [streamJumpVisible, setStreamJumpVisible] = useState(false);
@@ -433,6 +434,8 @@ export function ChatWindow(props: ChatWindowProps) {
   const isAtBottomRef = useRef(true);
   const prevMessageCountRef = useRef(messages.length);
   const prevLastAssistantStreamingRef = useRef(false);
+  const prevStreamLenRef = useRef(0);
+  const prevThreadMessageCountRef = useRef(0);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   const hoverLeaveTimerRef = useRef<number | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -473,10 +476,27 @@ export function ChatWindow(props: ChatWindowProps) {
     }
   };
 
+  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+  };
+
+  const isNearBottom = () => {
+    const container = messagesContainerRef.current;
+    if (!container) return true;
+    return (
+      container.scrollHeight -
+        container.scrollTop -
+        container.clientHeight <
+      NEAR_BOTTOM_PX
+    );
+  };
+
+  const scrollToBottomIfNear = () => {
+    if (isNearBottom()) scrollToBottom("smooth");
+  };
+
   const handleScrollToBottom = () => {
-    if (!scrollRef.current) return;
-    const el = scrollRef.current;
-    el.scrollTop = el.scrollHeight;
+    scrollToBottom("smooth");
     isAtBottomRef.current = true;
     setIsAtBottom(true);
     setUnreadCount(0);
@@ -485,17 +505,47 @@ export function ChatWindow(props: ChatWindowProps) {
 
   const hasMessages = messages.length > 0;
 
+  const streamingAssistantContent = useMemo(() => {
+    const last = messages[messages.length - 1];
+    if (last?.role === "assistant" && last.isStreaming) {
+      return String(last.content ?? "");
+    }
+    return null;
+  }, [messages]);
+
   useEffect(() => {
     prevLastAssistantStreamingRef.current = false;
+    prevStreamLenRef.current = 0;
+    prevThreadMessageCountRef.current = 0;
   }, [conversationId]);
+
+  // First batch of messages for this conversation: jump to bottom (no animation),
+  // except a lone new user message (let the user-message effect use smooth scroll).
+  useEffect(() => {
+    if (messages.length === 0) {
+      prevThreadMessageCountRef.current = 0;
+      return;
+    }
+    if (prevThreadMessageCountRef.current === 0) {
+      const last = messages[messages.length - 1];
+      const shouldInstant =
+        messages.length > 1 || last?.role === "assistant";
+      prevThreadMessageCountRef.current = messages.length;
+      if (shouldInstant) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => scrollToBottom("instant"));
+        });
+      }
+      return;
+    }
+    prevThreadMessageCountRef.current = messages.length;
+  }, [messages.length]);
 
   useEffect(() => {
     if (!scrollToBottomSignal) return;
     const id = window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        const el = scrollRef.current;
-        if (!el) return;
-        el.scrollTop = el.scrollHeight;
+        scrollToBottom("instant");
         isAtBottomRef.current = true;
         setIsAtBottom(true);
         setUnreadCount(0);
@@ -506,18 +556,42 @@ export function ChatWindow(props: ChatWindowProps) {
   }, [scrollToBottomSignal]);
 
   useEffect(() => {
-    const el = scrollRef.current;
+    if (messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (last?.role === "user") {
+      scrollToBottom("smooth");
+      return;
+    }
+    scrollToBottomIfNear();
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (streamingAssistantContent === null) {
+      prevStreamLenRef.current = 0;
+      return;
+    }
+    const len = streamingAssistantContent.length;
+    if (len === 0) return;
+    if (prevStreamLenRef.current === 0) {
+      scrollToBottom("smooth");
+    } else {
+      scrollToBottom("instant");
+    }
+    prevStreamLenRef.current = len;
+  }, [streamingAssistantContent]);
+
+  useEffect(() => {
+    const el = messagesContainerRef.current;
     if (!el || !hasMessages) return;
 
     const last = messages[messages.length - 1];
     const streamingAssist =
       last?.role === "assistant" && Boolean(last.isStreaming);
     const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = remaining < 100;
+    const nearBottom = remaining < NEAR_BOTTOM_PX;
 
     if (streamingAssist) {
       if (nearBottom) {
-        el.scrollTop = el.scrollHeight;
         isAtBottomRef.current = true;
         setIsAtBottom(true);
         setUnreadCount(0);
@@ -530,7 +604,7 @@ export function ChatWindow(props: ChatWindowProps) {
 
     setStreamJumpVisible(false);
     if (isAtBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
+      scrollToBottom("instant");
     }
   }, [messages, isLoading, hasMessages]);
 
@@ -552,12 +626,12 @@ export function ChatWindow(props: ChatWindowProps) {
   }, [messages]);
 
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = messagesContainerRef.current;
     if (!el) return;
 
     const handleScroll = () => {
       const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const atBottom = remaining < 100;
+      const atBottom = remaining < NEAR_BOTTOM_PX;
       isAtBottomRef.current = atBottom;
       setIsAtBottom(atBottom);
       if (atBottom) setUnreadCount(0);
@@ -568,7 +642,7 @@ export function ChatWindow(props: ChatWindowProps) {
     return () => {
       el.removeEventListener("scroll", handleScroll);
     };
-  }, []);
+  }, [hasMessages]);
 
   useEffect(() => {
     if (!editingUserKey) return;
@@ -1135,8 +1209,8 @@ export function ChatWindow(props: ChatWindowProps) {
 
   return (
     <section
-      ref={scrollRef}
-      className="relative flex-1 overflow-y-auto px-8 pt-8 pb-48 transition-colors duration-200"
+      ref={messagesContainerRef}
+      className="relative min-h-0 flex-1 overflow-y-auto px-8 pt-8 pb-48 transition-colors duration-200"
     >
       {!hasMessages ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
@@ -1194,6 +1268,7 @@ export function ChatWindow(props: ChatWindowProps) {
       ) : (
         <div className="mx-auto flex w-full max-w-[768px] flex-col gap-6">
           {renderedMessages}
+          <div ref={messagesEndRef} className="h-1 shrink-0" aria-hidden />
         </div>
       )}
 

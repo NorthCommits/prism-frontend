@@ -65,7 +65,7 @@ import {
   fetchModels,
   sendMessageStream,
 } from "../lib/api";
-import { checkOnboardingStatus, saveProfile } from "@/lib/profile";
+import { getProfile, saveProfile } from "@/lib/profile";
 import {
   getProject,
   getProjects,
@@ -82,6 +82,7 @@ import {
 import { Onboarding } from "@/components/Onboarding";
 import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
+import { LoadingScreen } from "@/components/LoadingScreen";
 import { ChatWindow } from "@/components/ChatWindow";
 import { ModelToggle } from "@/components/ModelToggle";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -222,6 +223,11 @@ function HomeContent() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarContentVisible, setIsSidebarContentVisible] = useState(true);
   const [user, setUser] = useState<UserLike | null>(null);
+  const [showLoading, setShowLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [bootIsNewUser, setBootIsNewUser] = useState(false);
+  const [bootFirstName, setBootFirstName] = useState("");
+  const bootstrapRunIdRef = useRef(0);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -416,18 +422,7 @@ function HomeContent() {
         return;
       }
       setUser(session.user as UserLike);
-
-      // Show onboarding the first time a user logs in.
-      const completed = await checkOnboardingStatus();
-      if (!completed) {
-        const meta = session.user.user_metadata ?? {};
-        const firstName =
-          (meta.first_name as string | undefined) ||
-          ((meta.full_name as string | undefined) ?? "").split(" ")[0] ||
-          "";
-        setOnboardingName(firstName);
-        setShowOnboarding(true);
-      }
+      /* Onboarding is opened from the app bootstrap sequence after profile loads. */
     };
     initAuth();
 
@@ -435,14 +430,33 @@ function HomeContent() {
       data: authListener,
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!session) {
+        try {
+          sessionStorage.removeItem("prism_app_loaded");
+          sessionStorage.removeItem("prism_bulk_embedded");
+          sessionStorage.removeItem("prism_user_id");
+        } catch {
+          /* sessionStorage unavailable */
+        }
         setUser(null);
         router.push("/landing");
       } else {
         setUser(session.user as UserLike);
 
-        // After email verification the user lands here for the first time.
-        // If signup stored a pending profile name, save it now and clear it.
         if (event === "SIGNED_IN") {
+          try {
+            const previousUserId = sessionStorage.getItem("prism_user_id");
+            const currentUserId = session.user.id ?? "";
+            if (previousUserId && previousUserId !== currentUserId) {
+              sessionStorage.removeItem("prism_app_loaded");
+              sessionStorage.removeItem("prism_bulk_embedded");
+            }
+            sessionStorage.setItem("prism_user_id", currentUserId);
+          } catch {
+            /* sessionStorage unavailable */
+          }
+
+          // After email verification the user lands here for the first time.
+          // If signup stored a pending profile name, save it now and clear it.
           try {
             const raw = window.localStorage.getItem("prism_pending_profile");
             if (raw) {
@@ -464,6 +478,187 @@ function HomeContent() {
       authListener.subscription.unsubscribe();
     };
   }, [router, supabase]);
+
+  // Bootstrap: profile, conversations, projects, embeddings; optional full loading UI.
+  useEffect(() => {
+    if (!user) {
+      setShowLoading(false);
+      return;
+    }
+
+    const runId = ++bootstrapRunIdRef.current;
+    let cancelled = false;
+    const isStale = () => cancelled || runId !== bootstrapRunIdRef.current;
+
+    let skipVisual = false;
+    try {
+      skipVisual = sessionStorage.getItem("prism_app_loaded") === "true";
+    } catch {
+      /* sessionStorage unavailable */
+    }
+
+    if (skipVisual) {
+      setShowLoading(false);
+      setLoadingProgress(100);
+    } else {
+      setShowLoading(true);
+      setLoadingProgress(0);
+    }
+
+    const bootStartedAt = Date.now();
+    let safetyId: number | null = null;
+    if (!skipVisual) {
+      safetyId = window.setTimeout(() => {
+        if (cancelled || runId !== bootstrapRunIdRef.current) return;
+        setLoadingProgress(100);
+        window.setTimeout(() => {
+          if (cancelled || runId !== bootstrapRunIdRef.current) return;
+          try {
+            sessionStorage.setItem("prism_app_loaded", "true");
+          } catch {
+            /* ignore */
+          }
+          setShowLoading(false);
+        }, 1200);
+      }, 8000);
+    }
+
+    const clearSafety = () => {
+      if (safetyId != null) {
+        window.clearTimeout(safetyId);
+        safetyId = null;
+      }
+    };
+
+    void (async () => {
+      let isNew = false;
+
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session) {
+          clearSafety();
+          return;
+        }
+        if (isStale()) return;
+
+        if (!skipVisual) setLoadingProgress(20);
+
+        let profile: Awaited<ReturnType<typeof getProfile>> = {};
+        try {
+          profile = await getProfile();
+        } catch {
+          /* continue without profile */
+        }
+        if (isStale()) return;
+
+        isNew = profile.onboarding_completed !== true;
+        setBootIsNewUser(isNew);
+
+        const firstName =
+          profile.display_name?.split(" ")[0] ||
+          (session.user.user_metadata?.first_name as string | undefined) ||
+          (
+            (session.user.user_metadata?.full_name as string | undefined) || ""
+          )
+            .split(" ")[0] ||
+          "";
+        setBootFirstName(firstName);
+
+        if (isNew) {
+          const meta = session.user.user_metadata ?? {};
+          const fn =
+            (meta.first_name as string | undefined) ||
+            ((meta.full_name as string | undefined) ?? "").split(" ")[0] ||
+            "";
+          setOnboardingName(fn);
+          setShowOnboarding(true);
+        }
+
+        if (!skipVisual) setLoadingProgress(40);
+
+        try {
+          setIsConversationsLoading(true);
+          const items = await getConversations();
+          if (!isStale()) setConversations(items);
+        } catch {
+          if (!isStale()) setConversations([]);
+        } finally {
+          if (!isStale()) setIsConversationsLoading(false);
+        }
+        if (isStale()) return;
+
+        if (!skipVisual) setLoadingProgress(60);
+
+        try {
+          const ps = await getProjects();
+          if (!isStale()) setBulkProjects(ps);
+        } catch {
+          if (!isStale()) setBulkProjects([]);
+        }
+        if (isStale()) return;
+
+        if (!skipVisual) setLoadingProgress(80);
+
+        try {
+          const hasEmbedded = sessionStorage.getItem("prism_bulk_embedded");
+          if (!hasEmbedded) {
+            sessionStorage.setItem("prism_bulk_embedded", "true");
+            void embedAllConversations().then((result) => {
+              if (result) {
+                console.log(
+                  `Embedded ${result.embedded}/${result.total} conversations`
+                );
+              }
+            });
+          }
+        } catch {
+          /* sessionStorage unavailable */
+        }
+        if (isStale()) return;
+
+        if (skipVisual) {
+          return;
+        }
+
+        setLoadingProgress(95);
+
+        await new Promise((r) => setTimeout(r, 300));
+        if (isStale()) return;
+
+        const minMs = isNew ? 2500 : 1500;
+        const elapsed = Date.now() - bootStartedAt;
+        if (elapsed < minMs) {
+          await new Promise((r) => setTimeout(r, minMs - elapsed));
+        }
+        if (isStale()) return;
+
+        setLoadingProgress(100);
+        clearSafety();
+      } catch {
+        clearSafety();
+        if (!isStale()) {
+          setLoadingProgress(100);
+          window.setTimeout(() => {
+            if (!isStale()) {
+              try {
+                sessionStorage.setItem("prism_app_loaded", "true");
+              } catch {
+                /* ignore */
+              }
+              setShowLoading(false);
+            }
+          }, 1200);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      clearSafety();
+    };
+  }, [user, supabase]);
 
   // Load sidebar collapsed state (and default to collapsed on small screens).
   useEffect(() => {
@@ -704,29 +899,6 @@ function HomeContent() {
     })
   );
 
-  useEffect(() => {
-    let isCancelled = false;
-    const loadConversations = async () => {
-      try {
-        setIsConversationsLoading(true);
-        const items = await getConversations();
-        if (isCancelled) return;
-        setConversations(items);
-      } catch {
-        if (isCancelled) return;
-        setConversations([]);
-      } finally {
-        if (!isCancelled) {
-          setIsConversationsLoading(false);
-        }
-      }
-    };
-    loadConversations();
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
-
   const refreshConversations = async () => {
     try {
       const items = await getConversations();
@@ -736,25 +908,14 @@ function HomeContent() {
     }
   };
 
-  // One-time per tab: refresh conversation embeddings for smart suggestions (non-blocking).
-  useEffect(() => {
-    if (!user || isConversationsLoading) return;
-    if (typeof window === "undefined") return;
+  const handleBootLoadingComplete = useCallback(() => {
     try {
-      const hasEmbedded = sessionStorage.getItem("prism_bulk_embedded");
-      if (hasEmbedded) return;
-      sessionStorage.setItem("prism_bulk_embedded", "true");
-      void embedAllConversations().then((result) => {
-        if (result) {
-          console.log(
-            `Embedded ${result.embedded}/${result.total} conversations`
-          );
-        }
-      });
+      sessionStorage.setItem("prism_app_loaded", "true");
     } catch {
       /* sessionStorage unavailable */
     }
-  }, [user, isConversationsLoading]);
+    setShowLoading(false);
+  }, []);
 
   const openConversationById = useCallback(
     async (id: string, knownConv?: Conversation) => {
@@ -1671,6 +1832,8 @@ function HomeContent() {
     ? "prism-warp-chat-in"
     : "prism-warp-chat-pre";
 
+  const chatBootHidden = showLoading && !showSplash;
+
   return (
     <ToastProvider>
       <>
@@ -1713,12 +1876,34 @@ function HomeContent() {
         />
       )}
 
-      {/*
+      <div className="relative min-h-screen w-full">
+        {user && showLoading && !showSplash && (
+          <div className="absolute inset-0 z-[9999]">
+            <LoadingScreen
+              isNewUser={bootIsNewUser}
+              userName={bootFirstName}
+              progress={loadingProgress}
+              onComplete={handleBootLoadingComplete}
+            />
+          </div>
+        )}
+
+        {/*
         Stable layout root — never has a transform applied, so all
         position:fixed children (sidebar, input bar) anchor correctly to
         the viewport regardless of what animation is running on the content.
       */}
-      <div suppressHydrationWarning className="min-h-screen bg-background text-foreground transition-colors duration-200">
+        <motion.div
+          suppressHydrationWarning
+          className="min-h-screen bg-background text-foreground transition-colors duration-200"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: chatBootHidden ? 0 : 1 }}
+          transition={{
+            duration: 0.4,
+            delay: chatBootHidden ? 0 : 0.1,
+            ease: "easeOut",
+          }}
+        >
         {/* Fixed sidebar — lives in the stable root so position:fixed anchors
             to the viewport and is never affected by the warp animation. */}
         <aside
@@ -2463,6 +2648,13 @@ function HomeContent() {
                         type="button"
                         onClick={async () => {
                           setIsProfileOpen(false);
+                          try {
+                            sessionStorage.removeItem("prism_app_loaded");
+                            sessionStorage.removeItem("prism_bulk_embedded");
+                            sessionStorage.removeItem("prism_user_id");
+                          } catch {
+                            /* sessionStorage unavailable */
+                          }
                           await supabase.auth.signOut();
                           router.push("/landing");
                         }}
@@ -2602,6 +2794,7 @@ function HomeContent() {
             }}
           />
         </div>
+        </motion.div>
       </div>
 
       <ConversationContextMenu
