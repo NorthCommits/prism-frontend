@@ -140,6 +140,25 @@ export async function searchConversations(
   return response.json();
 }
 
+export async function updateConversationTitle(
+  id: string,
+  title: string
+): Promise<Conversation> {
+  const headers = await getAuthHeader();
+  const response = await fetch(
+    `${API_URL}/api/v1/conversations/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify({ title }),
+    }
+  );
+  return handleResponse<Conversation>(response);
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const headers = await getAuthHeader();
   const response = await fetch(

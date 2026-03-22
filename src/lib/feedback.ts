@@ -27,9 +27,19 @@ export interface FeedbackParams {
 // Submits a thumbs-up / thumbs-down rating for a single assistant message.
 export async function submitFeedback(params: FeedbackParams): Promise<void> {
   const headers = await getAuthHeader();
-  await fetch(`${API_URL}/api/v1/feedback`, {
+  const response = await fetch(`${API_URL}/api/v1/feedback`, {
     method: "POST",
     headers,
     body: JSON.stringify(params),
   });
+  if (!response.ok) {
+    let detail = "Feedback failed";
+    try {
+      const data = (await response.json()) as { detail?: string; message?: string };
+      detail = data.detail || data.message || detail;
+    } catch {
+      // Ignore JSON parse errors.
+    }
+    throw new Error(detail);
+  }
 }

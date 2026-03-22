@@ -3,11 +3,14 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export type ModelId = "coding" | "writing" | "auto";
 
 export interface ChatMessage {
+  id?: string;
   role: "user" | "assistant";
   content: string;
   model_id?: ModelId;
   /** When true, assistant content is being streamed token-by-token. */
   isStreaming?: boolean;
+  /** Length of the most recent streamed token — used for subtle tail animation. */
+  lastTokenLength?: number;
   routed_to?: ModelId;
   routing_reason?: string;
   search_used?: boolean;

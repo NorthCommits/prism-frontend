@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   BarChart2,
   BookOpen,
@@ -14,7 +21,6 @@ import {
   Keyboard,
   Lightbulb,
   LogOut,
-  Menu,
   MessageCircle,
   Moon,
   PanelLeftClose,
@@ -31,7 +37,7 @@ import {
   X,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import {
   AvailableModel,
@@ -42,8 +48,14 @@ import {
   sendMessageStream,
 } from "../lib/api";
 import { checkOnboardingStatus, saveProfile } from "@/lib/profile";
-import { getProject, linkConversationToProject } from "@/lib/projects";
+import {
+  getProject,
+  getProjects,
+  linkConversationToProject,
+} from "@/lib/projects";
 import type { Project } from "@/lib/projects";
+import { ConversationContextMenu } from "@/components/ConversationContextMenu";
+import { MobileConversationRow } from "@/components/MobileConversationRow";
 import { Onboarding } from "@/components/Onboarding";
 import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
@@ -60,7 +72,9 @@ import {
   createConversation,
   saveMessage,
   searchConversations,
+  updateConversationTitle,
 } from "@/lib/history";
+import { useMobileKeyboardOpen } from "@/hooks/useMobileKeyboardOpen";
 import { createClient } from "@/lib/supabase";
 
 // Maps conversation title keywords to a Lucide icon component and its color tokens.
@@ -165,7 +179,7 @@ function formatRelativeTime(isoDate: string): string {
   return `${diffDays}d ago`;
 }
 
-export default function Home() {
+function HomeContent() {
   type UserLike = { id?: string; email?: string | null };
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [modelsById, setModelsById] = useState<
@@ -179,6 +193,7 @@ export default function Home() {
     null
   );
   const [isConversationsLoading, setIsConversationsLoading] = useState(true);
+  const [chatScrollSignal, setChatScrollSignal] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarContentVisible, setIsSidebarContentVisible] = useState(true);
   const [user, setUser] = useState<UserLike | null>(null);
@@ -253,8 +268,37 @@ export default function Home() {
     return () => window.clearTimeout(t);
   }, [isDarkTheme]);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const conversationParam = searchParams.get("conversation");
+  const searchOpenParam = searchParams.get("search");
+  const newChatParam = searchParams.get("new");
+  const conversationFromUrlAppliedRef = useRef<string | null>(null);
+  const searchUrlHandledRef = useRef(false);
+  const newChatUrlHandledRef = useRef(false);
   const supabase = createClient();
-  const touchStartXRef = useRef<number | null>(null);
+  const touchStartXRef = useRef(0);
+  const touchStartYRef = useRef(0);
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
+  const [swipeOpenConversationId, setSwipeOpenConversationId] = useState<
+    string | null
+  >(null);
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<string[]>(
+    []
+  );
+  const [contextMenu, setContextMenu] = useState<{
+    conversation: Conversation;
+    anchor: DOMRect;
+  } | null>(null);
+  const [contextMenuProjects, setContextMenuProjects] = useState<Project[]>([]);
+  const [installPrompt, setInstallPrompt] = useState<
+    | (Event & {
+        prompt: () => Promise<void>;
+        userChoice: Promise<{ outcome: string }>;
+      })
+    | null
+  >(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const keyboardOpen = useMobileKeyboardOpen();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -451,6 +495,92 @@ export default function Home() {
   }, [isMobile, isSidebarCollapsed]);
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("prism_pinned_conversations");
+      setPinnedConversationIds(
+        raw ? (JSON.parse(raw) as string[]) : []
+      );
+    } catch {
+      setPinnedConversationIds([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    if (searchOpenParam !== "true" || searchUrlHandledRef.current) {
+      return;
+    }
+    searchUrlHandledRef.current = true;
+    setIsSidebarCollapsed(false);
+    setIsSidebarContentVisible(true);
+    try {
+      window.localStorage.setItem("prism_sidebar_collapsed", "0");
+    } catch {
+      /* ignore */
+    }
+    router.replace("/", { scroll: false });
+    const id = window.requestAnimationFrame(() =>
+      sidebarSearchRef.current?.focus()
+    );
+    return () => window.cancelAnimationFrame(id);
+  }, [searchOpenParam, router]);
+
+  useEffect(() => {
+    if (newChatParam !== "true" || newChatUrlHandledRef.current) {
+      return;
+    }
+    newChatUrlHandledRef.current = true;
+    setActiveConversationId(null);
+    setMessages([]);
+    setInputValue("");
+    router.replace("/", { scroll: false });
+  }, [newChatParam, router]);
+
+  useEffect(() => {
+    let dismissed = 0;
+    try {
+      dismissed = Number(
+        window.localStorage.getItem("prism_install_dismissed_until") ?? "0"
+      );
+    } catch {
+      /* ignore */
+    }
+    if (Number.isFinite(dismissed) && Date.now() < dismissed) {
+      return;
+    }
+
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(
+        e as Event & {
+          prompt: () => Promise<void>;
+          userChoice: Promise<{ outcome: string }>;
+        }
+      );
+      window.setTimeout(() => setShowInstallBanner(true), 30000);
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    return () =>
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+  }, []);
+
+  const orderedConversations = useMemo(() => {
+    const pinSet = new Set(pinnedConversationIds);
+    const pinned: Conversation[] = [];
+    for (const id of pinnedConversationIds) {
+      const c = conversations.find((x) => x.id === id);
+      if (c) pinned.push(c);
+    }
+    const rest = conversations.filter((c) => !pinSet.has(c.id));
+    return [...pinned, ...rest];
+  }, [conversations, pinnedConversationIds]);
+
+  useEffect(() => {
     let isCancelled = false;
     const loadConversations = async () => {
       try {
@@ -481,6 +611,82 @@ export default function Home() {
       // Ignore refresh failures; existing state remains.
     }
   };
+
+  const openConversationById = useCallback(
+    async (id: string, knownConv?: Conversation) => {
+      setActiveConversationId(id);
+      try {
+        const items = await getConversationMessages(id);
+        const mapped: ChatMessage[] = items.map((message) => ({
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          model_id: message.model_id as ModelId | undefined,
+          routed_to: message.routed_to as ModelId | undefined,
+          routing_reason: message.routing_reason ?? undefined,
+          search_used: message.search_used,
+          search_query: message.search_query,
+        }));
+        setMessages(mapped);
+
+        let conv: Conversation | null | undefined = knownConv;
+        if (knownConv === undefined) {
+          conv = conversations.find((c) => c.id === id);
+        }
+        if (conv == null) {
+          const fresh = await getConversations();
+          setConversations(fresh);
+          conv = fresh.find((c) => c.id === id) ?? null;
+        }
+
+        if (conv?.project_id) {
+          try {
+            const proj = await getProject(conv.project_id);
+            setActiveProject(proj);
+          } catch {
+            setActiveProject(null);
+          }
+        } else {
+          setActiveProject(null);
+        }
+
+        setChatScrollSignal((s) => s + 1);
+      } catch {
+        setMessages([]);
+        setActiveProject(null);
+      }
+    },
+    [conversations]
+  );
+
+  useEffect(() => {
+    if (!conversationParam) {
+      conversationFromUrlAppliedRef.current = null;
+      return;
+    }
+    if (isConversationsLoading) return;
+    if (conversationFromUrlAppliedRef.current === conversationParam) return;
+    conversationFromUrlAppliedRef.current = conversationParam;
+
+    const param = conversationParam;
+    void (async () => {
+      try {
+        const conv = conversations.find((c) => c.id === param);
+        if (conv) {
+          await openConversationById(param, conv);
+        } else {
+          await openConversationById(param);
+        }
+      } finally {
+        window.history.replaceState({}, "", "/");
+      }
+    })();
+  }, [
+    conversationParam,
+    conversations,
+    isConversationsLoading,
+    openConversationById,
+  ]);
 
   const handleCreateConversation = () => {
     setActiveConversationId(null);
@@ -548,36 +754,8 @@ export default function Home() {
   };
 
   const handleOpenConversation = async (id: string) => {
-    setActiveConversationId(id);
-    try {
-      const items = await getConversationMessages(id);
-      const mapped: ChatMessage[] = items.map((message) => ({
-        role: message.role,
-        content: message.content,
-        model_id: message.model_id as ModelId | undefined,
-        routed_to: message.routed_to as ModelId | undefined,
-        routing_reason: message.routing_reason ?? undefined,
-        search_used: message.search_used,
-        search_query: message.search_query,
-      }));
-      setMessages(mapped);
-
-      // Restore active project from the conversation's linked project_id.
-      const conv = conversations.find((c) => c.id === id);
-      if (conv?.project_id) {
-        try {
-          const proj = await getProject(conv.project_id);
-          setActiveProject(proj);
-        } catch {
-          setActiveProject(null);
-        }
-      } else {
-        setActiveProject(null);
-      }
-    } catch {
-      setMessages([]);
-      setActiveProject(null);
-    }
+    const conv = conversations.find((c) => c.id === id);
+    await openConversationById(id, conv);
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -607,6 +785,51 @@ export default function Home() {
       setDeletingConversationStage("out");
       pushToast("Something went wrong", "error");
     }
+  };
+
+  const requestDeleteConversation = (id: string) => {
+    if (!window.confirm("Delete this conversation?")) {
+      return;
+    }
+    void handleDeleteConversation(id);
+    setSwipeOpenConversationId(null);
+  };
+
+  const openConversationContextMenu = useCallback(
+    async (conversation: Conversation, anchor: DOMRect) => {
+      setSwipeOpenConversationId(null);
+      setContextMenu({ conversation, anchor });
+      try {
+        const ps = await getProjects();
+        setContextMenuProjects(ps);
+      } catch {
+        setContextMenuProjects([]);
+      }
+    },
+    []
+  );
+
+  const handleInstallClick = async () => {
+    if (!installPrompt || typeof installPrompt.prompt !== "function") {
+      return;
+    }
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setShowInstallBanner(false);
+    setInstallPrompt(null);
+  };
+
+  const dismissInstallBanner = () => {
+    const until = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    try {
+      window.localStorage.setItem(
+        "prism_install_dismissed_until",
+        String(until)
+      );
+    } catch {
+      /* ignore */
+    }
+    setShowInstallBanner(false);
   };
 
   // Close profile dropdown when user clicks outside of it.
@@ -676,6 +899,7 @@ export default function Home() {
     setLastSentMessage(message);
 
     const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
       role: "user",
       content: message,
       file_used: !!file,
@@ -715,12 +939,11 @@ export default function Home() {
       }
     }
 
-    const userMessages = [...messages, userMessage];
-    setMessages(userMessages);
     setIsLoading(true);
 
+    let persistedUser: ChatMessage = userMessage;
     try {
-      await saveMessage({
+      const savedUser = await saveMessage({
         conversation_id: conversationId!,
         role: "user",
         content: message,
@@ -728,6 +951,7 @@ export default function Home() {
         file_used: !!file,
         file_name: file?.file_name,
       });
+      persistedUser = { ...userMessage, id: savedUser.id };
     } catch {
       // Ignore message save failure for user message.
     }
@@ -742,6 +966,7 @@ export default function Home() {
 
     // Create a placeholder assistant message and stream the response into it.
     const assistantPlaceholder: ChatMessage = {
+      id: crypto.randomUUID(),
       role: "assistant",
       content: "",
       model_id: selectedModel,
@@ -751,7 +976,7 @@ export default function Home() {
       active_template_label: template?.label,
     };
 
-    const initialMessages = [...userMessages, assistantPlaceholder];
+    const initialMessages = [...messages, persistedUser, assistantPlaceholder];
     setMessages(initialMessages);
 
     let assistantContent = "";
@@ -779,9 +1004,16 @@ export default function Home() {
         history,
         (token) => {
           assistantContent += token;
+          const chunkLen = token.length;
           setMessages((prev) =>
             prev.map((m, i) =>
-              i === prev.length - 1 ? { ...m, content: m.content + token } : m
+              i === prev.length - 1
+                ? {
+                    ...m,
+                    content: m.content + token,
+                    lastTokenLength: chunkLen,
+                  }
+                : m
             )
           );
         },
@@ -815,6 +1047,7 @@ export default function Home() {
               ) {
                 assistantContent = metadata.reply;
                 next.content = metadata.reply;
+                next.lastTokenLength = undefined;
               }
 
               return next;
@@ -826,14 +1059,16 @@ export default function Home() {
 
           setMessages((prev) =>
             prev.map((m, i) =>
-              i === prev.length - 1 ? { ...m, isStreaming: false } : m
+              i === prev.length - 1
+                ? { ...m, isStreaming: false, lastTokenLength: undefined }
+                : m
             )
           );
 
           void (async () => {
             if (!conversationId) return;
             try {
-              await saveMessage({
+              const savedAssistant = await saveMessage({
                 conversation_id: conversationId!,
                 role: "assistant",
                 content: assistantContent,
@@ -842,6 +1077,14 @@ export default function Home() {
                 routing_reason: latestMetadata?.routing_reason,
                 search_used: latestMetadata?.search_used,
                 search_query: latestMetadata?.search_query,
+              });
+              setMessages((prev) => {
+                const next = [...prev];
+                const li = next.length - 1;
+                if (li >= 0 && next[li].role === "assistant") {
+                  next[li] = { ...next[li], id: savedAssistant.id };
+                }
+                return next;
               });
               await refreshConversations();
             } catch {
@@ -855,7 +1098,12 @@ export default function Home() {
           setMessages((prev) =>
             prev.map((m, i) =>
               i === prev.length - 1
-                ? { ...m, content: error, isStreaming: false }
+                ? {
+                    ...m,
+                    content: error,
+                    isStreaming: false,
+                    lastTokenLength: undefined,
+                  }
                 : m
             )
           );
@@ -898,11 +1146,54 @@ export default function Home() {
       setMessages((prev) =>
         prev.map((m, i) =>
           i === prev.length - 1
-            ? { ...m, content: "Something went wrong, please try again.", isStreaming: false }
+            ? {
+                ...m,
+                content: "Something went wrong, please try again.",
+                isStreaming: false,
+                lastTokenLength: undefined,
+              }
             : m
         )
       );
     }
+  };
+
+  const handleRegenerate = (messageIndex: number) => {
+    setMessages((prev) => {
+      const userMessage = prev[messageIndex - 1];
+      if (!userMessage || userMessage.role !== "user") return prev;
+      const content = String(userMessage.content ?? "");
+      const file =
+        userMessage.file_used &&
+        userMessage.file_name &&
+        userMessage.file_type &&
+        userMessage.file_content
+          ? {
+              file_name: userMessage.file_name,
+              file_type: userMessage.file_type,
+              file_content: userMessage.file_content,
+            }
+          : undefined;
+      const image = userMessage.image_base64
+        ? {
+            base64: userMessage.image_base64,
+            mediaType: userMessage.image_media_type ?? "image/jpeg",
+          }
+        : undefined;
+      queueMicrotask(() => {
+        void handleSend(content, file, image);
+      });
+      return prev.slice(0, messageIndex);
+    });
+  };
+
+  const handleEditMessage = (messageIndex: number, newContent: string) => {
+    const trimmed = newContent.trim();
+    if (!trimmed) return;
+    setMessages((prev) => prev.slice(0, messageIndex));
+    queueMicrotask(() => {
+      void handleSend(trimmed);
+    });
   };
 
   const handleQuoteReply = (quotedText: string) => {
@@ -1053,6 +1344,7 @@ export default function Home() {
                     )}
                   </span>
                   <input
+                    ref={sidebarSearchRef}
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -1179,58 +1471,110 @@ export default function Home() {
                         <div className="h-4 w-10/12 animate-pulse rounded bg-muted/60" />
                         <div className="h-4 w-8/12 animate-pulse rounded bg-muted/60" />
                       </div>
-                    ) : conversations.length === 0 ? (
+                    ) : orderedConversations.length === 0 ? (
                       <p className="px-2 text-xs text-muted-foreground">
                         No conversations yet
                       </p>
                     ) : (
-                      conversations.map((conversation) => {
-                        const isActive = conversation.id === activeConversationId;
+                      orderedConversations.map((conversation) => {
+                        const isActive =
+                          conversation.id === activeConversationId;
+                        const animClass = `${
+                          conversation.id === newConversationId
+                            ? "prism-conv-enter"
+                            : ""
+                        } ${
+                          deletingConversationId === conversation.id
+                            ? deletingConversationStage === "out"
+                              ? "prism-conv-delete-out"
+                              : "prism-conv-delete-collapse"
+                            : ""
+                        } ${isActive ? "prism-conv-active" : ""}`;
+                        const rowSurfaceActive =
+                          "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:z-10 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]";
+                        const rowSurfaceInactiveDesktop =
+                          "bg-transparent after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200";
+                        const rowSurfaceInactiveMobile =
+                          "bg-[#f5f3ff] dark:bg-[#0d0b1a] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200";
+                        const rowSurface = isActive
+                          ? rowSurfaceActive
+                          : isMobile
+                            ? rowSurfaceInactiveMobile
+                            : rowSurfaceInactiveDesktop;
+
+                        const cfg = getConversationIconConfig(
+                          conversation.title
+                        );
+                        const IconEl = cfg.icon;
+                        const iconSpan = (
+                          <span
+                            className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
+                              isActive
+                                ? `${cfg.activeBg} ${cfg.activeColor}`
+                                : `${cfg.bg} ${cfg.color}`
+                            }`}
+                            style={{ width: 24, height: 24 }}
+                          >
+                            <IconEl className="size-3.5" />
+                          </span>
+                        );
+                        const textBlock = (
+                          <div className="min-w-0 text-left">
+                            <p className="line-clamp-1 text-foreground/90">
+                              {conversation.title}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {formatRelativeTime(conversation.updated_at)}
+                            </p>
+                          </div>
+                        );
+
+                        if (isMobile) {
+                          return (
+                            <MobileConversationRow
+                              key={conversation.id}
+                              className={`group ${animClass}`}
+                              conversationId={conversation.id}
+                              swipeOpenId={swipeOpenConversationId}
+                              onSwipeOpenChange={setSwipeOpenConversationId}
+                              onOpen={() => {
+                                setSwipeOpenConversationId(null);
+                                void handleOpenConversation(conversation.id);
+                              }}
+                              onDeletePress={() =>
+                                requestDeleteConversation(conversation.id)
+                              }
+                              onLongPress={(rect) =>
+                                void openConversationContextMenu(
+                                  conversation,
+                                  rect
+                                )
+                              }
+                            >
+                              <div
+                                className={`relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface}`}
+                              >
+                                {iconSpan}
+                                {textBlock}
+                              </div>
+                            </MobileConversationRow>
+                          );
+                        }
+
                         return (
                           <div
                             key={conversation.id}
-                            className={`group relative flex items-center gap-2 rounded-lg px-2 py-1.5 text-left cursor-pointer transition-colors duration-200 overflow-hidden ${
-                              isActive
-                                ? "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]"
-                                : "bg-transparent after:content-[''] after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200"
-                            } ${conversation.id === newConversationId ? "prism-conv-enter" : ""} ${
-                              deletingConversationId === conversation.id
-                                ? deletingConversationStage === "out"
-                                  ? "prism-conv-delete-out"
-                                  : "prism-conv-delete-collapse"
-                                : ""
-                            } ${isActive ? "prism-conv-active" : ""}`}
+                            className={`group relative flex cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface} ${animClass}`}
                           >
                             <button
                               type="button"
-                              onClick={() => handleOpenConversation(conversation.id)}
-                              className="flex min-w-0 flex-1 items-center gap-2"
+                              onClick={() =>
+                                handleOpenConversation(conversation.id)
+                              }
+                              className="relative z-20 flex min-w-0 flex-1 items-center gap-2"
                             >
-                              {/* Dynamic icon whose colour reflects the topic of the conversation */}
-                              {(() => {
-                                const cfg = getConversationIconConfig(conversation.title);
-                                const IconEl = cfg.icon;
-                                return (
-                                  <span
-                                    className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
-                                      isActive
-                                        ? `${cfg.activeBg} ${cfg.activeColor}`
-                                        : `${cfg.bg} ${cfg.color}`
-                                    }`}
-                                    style={{ width: 24, height: 24 }}
-                                  >
-                                    <IconEl className="size-3.5" />
-                                  </span>
-                                );
-                              })()}
-                              <div className="min-w-0 text-left">
-                                <p className="line-clamp-1 text-foreground/90">
-                                  {conversation.title}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground">
-                                  {formatRelativeTime(conversation.updated_at)}
-                                </p>
-                              </div>
+                              {iconSpan}
+                              {textBlock}
                             </button>
                             <button
                               type="button"
@@ -1238,7 +1582,7 @@ export default function Home() {
                                 event.stopPropagation();
                                 handleDeleteConversation(conversation.id);
                               }}
-                              className="opacity-0 transition-opacity group-hover:opacity-100"
+                              className="relative z-20 opacity-0 transition-opacity group-hover:opacity-100"
                               aria-label="Delete conversation"
                             >
                               <Trash2 className="size-3.5 text-muted-foreground hover:text-foreground" />
@@ -1260,19 +1604,34 @@ export default function Home() {
         {isMobile && !isSidebarCollapsed && (
           <div
             className="fixed inset-0 z-[39] bg-black/50 backdrop-blur-sm md:hidden cursor-pointer"
-            onClick={() => setIsSidebarCollapsed(true)}
+            onClick={() => {
+              setIsSidebarCollapsed(true);
+              setIsSidebarContentVisible(false);
+              try {
+                window.localStorage.setItem("prism_sidebar_collapsed", "1");
+              } catch {
+                /* ignore */
+              }
+            }}
             onTouchStart={(e) => {
-              touchStartXRef.current = e.touches?.[0]?.clientX ?? null;
+              const t = e.touches[0];
+              touchStartXRef.current = t.clientX;
+              touchStartYRef.current = t.clientY;
             }}
             onTouchEnd={(e) => {
-              const startX = touchStartXRef.current;
-              const endX = e.changedTouches?.[0]?.clientX ?? null;
-              touchStartXRef.current = null;
               if (!isMobile) return;
-              if (startX === null || endX === null) return;
-              // Swipe left closes the sidebar.
-              if (startX - endX > 50) {
+              const t = e.changedTouches[0];
+              const deltaX = t.clientX - touchStartXRef.current;
+              const deltaY = t.clientY - touchStartYRef.current;
+              if (Math.abs(deltaY) > 75) return;
+              if (deltaX < -50) {
                 setIsSidebarCollapsed(true);
+                try {
+                  window.localStorage.setItem("prism_sidebar_collapsed", "1");
+                } catch {
+                  /* ignore */
+                }
+                setIsSidebarContentVisible(false);
               }
             }}
             aria-hidden
@@ -1287,16 +1646,33 @@ export default function Home() {
         <div
           onTouchStart={(e) => {
             if (!isMobile) return;
-            touchStartXRef.current = e.touches?.[0]?.clientX ?? null;
+            const t = e.touches[0];
+            touchStartXRef.current = t.clientX;
+            touchStartYRef.current = t.clientY;
           }}
           onTouchEnd={(e) => {
             if (!isMobile) return;
-            const startX = touchStartXRef.current;
-            const endX = e.changedTouches?.[0]?.clientX ?? null;
-            touchStartXRef.current = null;
-            if (startX === null || endX === null) return;
-            if (startX < 50 && endX - startX > 50) {
+            const t = e.changedTouches[0];
+            const deltaX = t.clientX - touchStartXRef.current;
+            const deltaY = t.clientY - touchStartYRef.current;
+            if (Math.abs(deltaY) > 75) return;
+            if (deltaX > 50 && touchStartXRef.current < 30) {
               setIsSidebarCollapsed(false);
+              setIsSidebarContentVisible(true);
+              try {
+                window.localStorage.setItem("prism_sidebar_collapsed", "0");
+              } catch {
+                /* ignore */
+              }
+            }
+            if (deltaX < -50 && !isSidebarCollapsed) {
+              setIsSidebarCollapsed(true);
+              try {
+                window.localStorage.setItem("prism_sidebar_collapsed", "1");
+              } catch {
+                /* ignore */
+              }
+              setIsSidebarContentVisible(false);
             }
           }}
           className={`flex min-h-screen flex-col transition-[margin-left] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
@@ -1308,16 +1684,7 @@ export default function Home() {
           } ${chatWarpClass} ${isChatShaking ? "prism-warp-chat-shake" : ""}`}
         >
           <header className="flex items-center justify-between border-b border-b-[#e0ddff] bg-white px-6 py-3 shadow-sm dark:border-b-[#1f2937] dark:bg-[#0d0b1a] transition-colors duration-200">
-            <div className="flex w-32 items-center">
-              <button
-                type="button"
-                className="md:hidden inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-xs text-foreground shadow-sm transition-colors hover:bg-muted"
-                aria-label="Open sidebar"
-                onClick={() => setIsSidebarCollapsed(false)}
-              >
-                <Menu className="size-4" />
-              </button>
-            </div>
+            <div className="hidden w-32 md:flex md:items-center" aria-hidden />
             <ModelToggle
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
@@ -1464,6 +1831,9 @@ export default function Home() {
               modelsById={modelsById}
               isLoading={isLoading}
               conversationId={activeConversationId}
+              scrollToBottomSignal={chatScrollSignal}
+              onRegenerate={handleRegenerate}
+              onEditMessage={handleEditMessage}
               onQuoteReply={handleQuoteReply}
               onSuggestionClick={(text) => {
                 setInputValue(text);
@@ -1477,7 +1847,13 @@ export default function Home() {
           ChatInput is fixed but lives in the stable root (no ancestor transform),
           so it always anchors to the viewport correctly.
         */}
-        <div className="fixed inset-x-0 bottom-0 z-30">
+        <div
+          className={`fixed inset-x-0 z-[55] ${
+            keyboardOpen
+              ? "bottom-0"
+              : "bottom-0 max-md:bottom-[calc(4rem+env(safe-area-inset-bottom))]"
+          }`}
+        >
           <ChatInput
             onSend={handleSend}
             isLoading={isLoading}
@@ -1506,6 +1882,138 @@ export default function Home() {
           />
         </div>
       </div>
+
+      <ConversationContextMenu
+        open={contextMenu !== null}
+        conversation={contextMenu?.conversation ?? null}
+        anchor={contextMenu?.anchor ?? null}
+        projects={contextMenuProjects}
+        isPinned={
+          contextMenu
+            ? pinnedConversationIds.includes(contextMenu.conversation.id)
+            : false
+        }
+        onClose={() => setContextMenu(null)}
+        onPin={() => {
+          if (!contextMenu) return;
+          const id = contextMenu.conversation.id;
+          setPinnedConversationIds((prev) => {
+            const next = prev.includes(id)
+              ? prev.filter((x) => x !== id)
+              : [id, ...prev];
+            try {
+              window.localStorage.setItem(
+                "prism_pinned_conversations",
+                JSON.stringify(next)
+              );
+            } catch {
+              /* ignore */
+            }
+            return next;
+          });
+          setContextMenu(null);
+        }}
+        onRename={async () => {
+          if (!contextMenu) return;
+          const c = contextMenu.conversation;
+          const next = window.prompt("Rename conversation", c.title);
+          setContextMenu(null);
+          if (!next?.trim()) return;
+          try {
+            await updateConversationTitle(c.id, next.trim());
+            await refreshConversations();
+          } catch {
+            pushToast("Could not rename conversation", "error");
+          }
+        }}
+        onExport={async () => {
+          if (!contextMenu) return;
+          const c = contextMenu.conversation;
+          setContextMenu(null);
+          try {
+            const msgs = await getConversationMessages(c.id);
+            const blob = new Blob(
+              [JSON.stringify({ conversation: c, messages: msgs }, null, 2)],
+              { type: "application/json" }
+            );
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `prism-chat-${c.id.slice(0, 8)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          } catch {
+            pushToast("Export failed", "error");
+          }
+        }}
+        onLinkProject={async (projectId) => {
+          if (!contextMenu) return;
+          const id = contextMenu.conversation.id;
+          setContextMenu(null);
+          try {
+            await linkConversationToProject(id, projectId);
+            await refreshConversations();
+            if (activeConversationId === id) {
+              if (projectId) {
+                try {
+                  const proj = await getProject(projectId);
+                  setActiveProject(proj);
+                } catch {
+                  setActiveProject(null);
+                }
+              } else {
+                setActiveProject(null);
+              }
+            }
+            pushToast(
+              projectId ? "Linked to project" : "Unlinked from project",
+              "success"
+            );
+          } catch {
+            pushToast("Could not update project link", "error");
+          }
+        }}
+        onDelete={() => {
+          if (!contextMenu) return;
+          const id = contextMenu.conversation.id;
+          setContextMenu(null);
+          requestDeleteConversation(id);
+        }}
+      />
+
+      {showInstallBanner && installPrompt && !keyboardOpen && (
+        <div
+          className="fixed inset-x-0 z-[52] mx-3 hidden max-md:block rounded-xl border border-white/10 bg-zinc-950/95 p-3 shadow-xl backdrop-blur-xl"
+          style={{
+            bottom:
+              "calc(4rem + env(safe-area-inset-bottom, 0px) + 12px)",
+          }}
+        >
+          <p className="text-sm font-semibold text-white">
+            Add Prism to Home Screen
+          </p>
+          <p className="mt-1 text-xs text-white/60">
+            Quick access, works offline
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              className="flex-1 rounded-lg border border-white/15 py-2 text-xs font-medium text-white/80 transition-colors hover:bg-white/5"
+              onClick={dismissInstallBanner}
+            >
+              Not now
+            </button>
+            <button
+              type="button"
+              className="flex-1 rounded-lg bg-gradient-to-r from-[#7c3aed] to-[#2563eb] py-2 text-xs font-medium text-white shadow-sm transition-opacity hover:opacity-95"
+              onClick={() => void handleInstallClick()}
+            >
+              Install
+            </button>
+          </div>
+        </div>
+      )}
+
       <ToastContainer />
 
       {/* Keyboard shortcuts modal */}
@@ -1556,3 +2064,10 @@ export default function Home() {
   );
 }
 
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeContent />
+    </Suspense>
+  );
+}

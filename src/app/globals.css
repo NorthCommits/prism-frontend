@@ -878,3 +878,119 @@ body {
 .sidebar-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(139, 92, 246, 0.6);
 }
+
+/* Streaming assistant: last token fades in (opacity + transform only). */
+@keyframes token-appear {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.token-appear {
+  animation: token-appear 0.15s ease-out forwards;
+  will-change: transform, opacity;
+}
+
+/* Gradient bar cursor while the model is streaming text. */
+@keyframes cursor-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes cursor-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #8b5cf6, #06b6d4);
+  animation: cursor-pulse 1s ease-in-out infinite;
+  will-change: opacity;
+}
+
+.streaming-cursor--fade-out {
+  animation: cursor-fade-out 0.3s ease-out forwards;
+}
+
+/* Thinking row: three purple dots bounce in sequence. */
+@keyframes bounce-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-6px);
+  }
+}
+
+.thinking-dots .thinking-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #7c3aed;
+  animation: bounce-dot 1s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Placeholder pill while auto-routing metadata is still loading. */
+@keyframes routing-shimmer-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.prism-routing-shimmer-pill {
+  width: 200px;
+  height: 20px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    rgba(120, 120, 130, 0.25),
+    rgba(200, 200, 210, 0.35),
+    rgba(120, 120, 130, 0.25)
+  );
+  background-size: 200% 100%;
+  animation: routing-shimmer-shift 1.2s ease-in-out infinite;
+  will-change: background-position;
+}
+
+/* “New content” during stream — gentle bounce (transform only). */
+@keyframes prism-stream-jump-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.prism-stream-new-content-btn {
+  animation: prism-stream-jump-bounce 2s ease-in-out infinite;
+  will-change: transform;
+}

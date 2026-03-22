@@ -8,7 +8,6 @@ import {
 } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
-  Check,
   ChevronDown,
   Copy,
   Eye,
@@ -23,18 +22,16 @@ import {
 } from "lucide-react";
 
 import type { AvailableModel, ChatMessage, ModelId } from "../lib/api";
-import { MessageFeedback } from "@/components/MessageFeedback";
+import { MessageActionsBar } from "@/components/MessageActionsBar";
+import { submitFeedback } from "@/lib/feedback";
 import { PlotRenderer } from "@/components/PlotRenderer";
 import { ImageRenderer } from "@/components/ImageRenderer";
+import { CodeBlock } from "@/components/CodeBlock";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import type { Components } from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import {
-  vscDarkPlus,
-  vs,
-} from "react-syntax-highlighter/dist/esm/styles/prism";
-import { useTheme } from "next-themes";
+import { AnimatePresence, motion } from "motion/react";
 import { useToast } from "@/components/Toast";
 
 type ChatWindowProps = {
@@ -46,6 +43,10 @@ type ChatWindowProps = {
   onSuggestionClick?: (text: string) => void;
   /** Active conversation id passed through to the feedback widget. */
   conversationId?: string | null;
+  /** Increment to scroll the thread to the bottom after messages load (e.g. open conversation). */
+  scrollToBottomSignal?: number;
+  onRegenerate?: (messageIndex: number) => void;
+  onEditMessage?: (messageIndex: number, newContent: string) => void;
 };
 
 // Basic parser to split plain text and fenced code blocks for readable display.
@@ -96,187 +97,118 @@ function spawnRipple(
   window.setTimeout(() => ripple.remove(), 400);
 }
 
-// Icon-only copy control for fenced code headers; shows a checkmark briefly after copy.
-function CopyCodeButton(props: { code: string }) {
-  const { code } = props;
-  const [copied, setCopied] = useState(false);
-  const { addToast } = useToast();
-
-  const handleCopy = async (event: ReactMouseEvent<HTMLButtonElement>) => {
-    try {
-      spawnRipple(event.currentTarget, event.clientX, event.clientY);
-      await window.navigator.clipboard.writeText(code);
-      setCopied(true);
-      addToast("Copied to clipboard", "success");
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Ignore clipboard errors.
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      title={copied ? "Copied" : "Copy code"}
-      className={`relative overflow-hidden inline-flex items-center justify-center rounded p-0.5 text-xs text-muted-foreground transition-colors hover:text-white ${
-        copied ? "prism-copy-flash-bg" : ""
-      }`}
-    >
-      <span className="relative inline-flex size-3.5 items-center justify-center">
-        <Copy
-          className={`absolute inset-0 transition-opacity duration-150 ${
-            copied ? "opacity-0" : "opacity-100"
-          }`}
-          aria-hidden
-        />
-        <Check
-          className={`absolute inset-0 transition-opacity duration-150 ${
-            copied ? "opacity-100" : "opacity-0"
-          }`}
-          aria-hidden
-        />
-      </span>
-    </button>
-  );
+// Closes dangling ** / * / ` while streaming so partial markdown still parses.
+function fixPartialMarkdown(text: string): string {
+  let result = text;
+  const boldCount = (result.match(/\*\*/g) || []).length;
+  if (boldCount % 2 !== 0) {
+    result += "**";
+  }
+  const singleStars = result.replace(/\*\*/g, "");
+  const italicCount = (singleStars.match(/\*/g) || []).length;
+  if (italicCount % 2 !== 0) {
+    result += "*";
+  }
+  const backtickCount = (result.match(/`/g) || []).length;
+  if (backtickCount % 2 !== 0) {
+    result += "`";
+  }
+  return result;
 }
 
-// Fenced assistant code: Prism theme bar + syntax-highlighted body with scroll cap.
-function MarkdownFencedCode(props: { code: string; language?: string }) {
-  const { code, language } = props;
-  const { resolvedTheme } = useTheme();
-  const isDarkMode = resolvedTheme === "dark";
-
-  const prismLanguage = language && language.length > 0 ? language : "markup";
-  const headerLabel = language && language.length > 0 ? language : "code";
-
-  const codeBackground = isDarkMode ? "#1e1e2e" : "#f6f8fa";
-  const codeText = isDarkMode ? "#e2e8f0" : "#24292e";
-  const headerBorderColor = isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)";
-
-  return (
-    <div className="relative mb-3 overflow-hidden rounded-lg font-mono text-sm">
-      <div
-        className="flex items-center justify-between px-4 py-2"
-        style={{
-          backgroundColor: codeBackground,
-          borderBottom: `1px solid ${headerBorderColor}`,
-        }}
-      >
-        <span className="text-xs" style={{ color: codeText }}>
-          {headerLabel}
-        </span>
-        <CopyCodeButton code={code} />
-      </div>
-      <SyntaxHighlighter
-        style={isDarkMode ? vscDarkPlus : vs}
-        language={prismLanguage}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          padding: "16px",
-          background: codeBackground,
-          color: codeText,
-          borderRadius: "0 0 8px 8px",
-          fontSize: "13px",
-          maxHeight: "400px",
-          overflowY: "auto",
-          overflowX: "auto",
-        }}
-      >
-        {code}
-      </SyntaxHighlighter>
-    </div>
-  );
-}
-
-// Renders assistant text as GitHub-flavored markdown with Prism-themed styles.
-function AssistantMarkdown(props: { content: string }) {
-  const { content } = props;
+// Renders assistant text as GitHub-flavored markdown with shared code block styling.
+function AssistantMarkdown(props: {
+  content: string;
+  conversationId?: string | null;
+}) {
+  const { content, conversationId } = props;
 
   const markdownComponents: Partial<Components> = {
     h1: ({ children, ...rest }) => (
-      <h1 className="mt-4 mb-3 text-2xl font-bold" {...rest}>
+      <h1
+        className="mb-3 mt-4 text-2xl font-bold text-white"
+        {...rest}
+      >
         {children}
       </h1>
     ),
     h2: ({ children, ...rest }) => (
-      <h2 className="mt-4 mb-2 text-xl font-bold" {...rest}>
+      <h2
+        className="mb-2 mt-4 text-xl font-bold text-white"
+        {...rest}
+      >
         {children}
       </h2>
     ),
     h3: ({ children, ...rest }) => (
-      <h3 className="mt-3 mb-2 text-lg font-semibold" {...rest}>
+      <h3
+        className="mb-2 mt-3 text-lg font-semibold text-white"
+        {...rest}
+      >
         {children}
       </h3>
     ),
     p: ({ children, ...rest }) => (
-      <p className="mb-3 leading-relaxed last:mb-0" {...rest}>
+      <p className="mb-3 leading-7 last:mb-0" {...rest}>
         {children}
       </p>
     ),
     ul: ({ children, ...rest }) => (
-      <ul
-        className="mb-3 ml-4 list-outside list-disc space-y-1"
-        {...rest}
-      >
+      <ul className="mb-3 ml-4 list-disc space-y-1" {...rest}>
         {children}
       </ul>
     ),
     ol: ({ children, ...rest }) => (
-      <ol
-        className="mb-3 ml-4 list-outside list-decimal space-y-1"
-        {...rest}
-      >
+      <ol className="mb-3 ml-4 list-decimal space-y-1" {...rest}>
         {children}
       </ol>
     ),
     li: ({ children, ...rest }) => (
-      <li className="leading-relaxed" {...rest}>
+      <li className="leading-7" {...rest}>
         {children}
       </li>
     ),
     blockquote: ({ children, ...rest }) => (
       <blockquote
-        className="mb-3 border-l-[3px] border-[#7c3aed] pl-4 italic text-muted-foreground"
+        className="my-3 border-l-4 border-purple-500/50 pl-4 italic text-white/70"
         {...rest}
       >
         {children}
       </blockquote>
     ),
-    hr: () => (
-      <div className="my-5 flex items-center gap-3" aria-hidden>
-        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#7c3aed]/40 to-transparent" />
-        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-gradient-to-br from-[#7c3aed] to-[#2563eb] opacity-60">
-          <Zap className="size-2.5 text-white" />
-        </span>
-        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#2563eb]/40 to-transparent" />
-      </div>
-    ),
+    hr: () => <hr className="my-4 border-white/10" />,
     a: ({ children, href, ...rest }) => (
       <a
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-purple-500 hover:underline"
+        className="text-purple-400 underline hover:text-purple-300"
         {...rest}
       >
         {children}
       </a>
     ),
     strong: ({ children, ...rest }) => (
-      <strong className="font-semibold" {...rest}>
+      <strong className="font-bold text-white" {...rest}>
         {children}
       </strong>
     ),
     em: ({ children, ...rest }) => (
-      <em className="italic" {...rest}>
+      <em className="italic text-white/90" {...rest}>
         {children}
       </em>
     ),
+    del: ({ children, ...rest }) => (
+      <del className="text-white/50 line-through" {...rest}>
+        {children}
+      </del>
+    ),
     table: ({ children, ...rest }) => (
-      <div className="mb-3 w-full overflow-x-auto">
-        <table className="w-full border-collapse" {...rest}>
+      <div className="my-3 overflow-x-auto">
+        <table
+          className="w-full border-collapse text-sm"
+          {...rest}
+        >
           {children}
         </table>
       </div>
@@ -290,21 +222,24 @@ function AssistantMarkdown(props: { content: string }) {
     tr: ({ children, ...rest }) => <tr {...rest}>{children}</tr>,
     th: ({ children, ...rest }) => (
       <th
-        className="border border-border bg-muted px-4 py-2 text-left font-semibold"
+        className="border border-white/10 bg-white/5 px-3 py-2 text-left font-semibold text-white"
         {...rest}
       >
         {children}
       </th>
     ),
     td: ({ children, ...rest }) => (
-      <td className="border border-border px-4 py-2" {...rest}>
+      <td
+        className="border border-white/10 px-3 py-2 text-white/80"
+        {...rest}
+      >
         {children}
       </td>
     ),
     // Let the `code` renderer handle both inline + fenced blocks.
     // Avoid rendering children directly here to prevent inline styles from bleeding into fenced blocks.
     pre: ({ children }) => <>{children}</>,
-    code: ({ className, children }) => {
+    code: ({ className, children, node: _node, ...props }) => {
       const match = /language-(\w+)/.exec(className || "");
 
       const rawChildren = children ?? "";
@@ -317,12 +252,19 @@ function AssistantMarkdown(props: { content: string }) {
       const isFencedBlock = Boolean(match) || codeString.includes("\n");
 
       if (isFencedBlock) {
-        return <MarkdownFencedCode code={codeString} language={language} />;
+        return (
+          <CodeBlock
+            code={codeString}
+            language={language}
+            conversationId={conversationId}
+          />
+        );
       }
 
       return (
         <code
-          className={`rounded-md bg-[rgba(124,58,237,0.1)] px-1.5 py-0.5 font-mono text-sm text-[#7c3aed] dark:text-[#a78bfa] ${className ?? ""}`}
+          className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-sm"
+          {...props}
         >
           {children}
         </code>
@@ -332,10 +274,135 @@ function AssistantMarkdown(props: { content: string }) {
 
   return (
     <div className="text-[15px] leading-relaxed">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
+        components={markdownComponents}
+      >
         {content}
       </ReactMarkdown>
     </div>
+  );
+}
+
+function markdownFencesBalanced(text: string): boolean {
+  return (text.match(/```/g) ?? []).length % 2 === 0;
+}
+
+// Splits the tail token into a separate animated span when fences stay balanced.
+function StreamingAssistantMarkdown(props: {
+  content: string;
+  isStreaming: boolean;
+  lastTokenLength?: number;
+  conversationId?: string | null;
+}) {
+  const { content, isStreaming, lastTokenLength, conversationId } = props;
+
+  if (!isStreaming) {
+    return (
+      <AssistantMarkdown content={content} conversationId={conversationId} />
+    );
+  }
+
+  const fixedFull = fixPartialMarkdown(content);
+  const syntheticSuffix = fixedFull.slice(content.length);
+
+  // Do not split when closers were appended; settled-only would miss open ** / * / `.
+  if (syntheticSuffix.length > 0) {
+    return (
+      <div className="prism-streaming-md-wrap min-w-0">
+        <div className="token-appear" key={content.length}>
+          <AssistantMarkdown
+            content={fixedFull}
+            conversationId={conversationId}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    !lastTokenLength ||
+    lastTokenLength <= 0 ||
+    content.length < lastTokenLength
+  ) {
+    return (
+      <AssistantMarkdown content={content} conversationId={conversationId} />
+    );
+  }
+
+  const settled = content.slice(0, -lastTokenLength);
+  const tail = content.slice(-lastTokenLength);
+
+  if (!markdownFencesBalanced(settled)) {
+    return (
+      <AssistantMarkdown content={content} conversationId={conversationId} />
+    );
+  }
+
+  return (
+    <div className="prism-streaming-md-wrap min-w-0">
+      {settled.length > 0 && (
+        <AssistantMarkdown content={settled} conversationId={conversationId} />
+      )}
+      <div className="token-appear" key={content.length}>
+        <AssistantMarkdown content={tail} conversationId={conversationId} />
+      </div>
+    </div>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <div
+      className="thinking-dots flex items-center gap-1.5 py-1"
+      aria-hidden
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="thinking-dot"
+          style={{ animationDelay: `${i * 0.15}s` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function StreamingCursor(props: { isStreaming: boolean; hasText: boolean }) {
+  const { isStreaming, hasText } = props;
+  const [fadeOut, setFadeOut] = useState(false);
+  const everStreamedRef = useRef(false);
+
+  useEffect(() => {
+    if (isStreaming) {
+      everStreamedRef.current = true;
+    }
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (!isStreaming && everStreamedRef.current && hasText) {
+      setFadeOut(true);
+      const id = window.setTimeout(() => {
+        setFadeOut(false);
+        everStreamedRef.current = false;
+      }, 320);
+      return () => window.clearTimeout(id);
+    }
+    if (!isStreaming && !hasText) {
+      everStreamedRef.current = false;
+    }
+    return undefined;
+  }, [isStreaming, hasText]);
+
+  const visible = (isStreaming && hasText) || fadeOut;
+  if (!visible) return null;
+
+  return (
+    <span
+      className={`streaming-cursor ${fadeOut ? "streaming-cursor--fade-out" : ""}`}
+      aria-hidden
+    />
   );
 }
 
@@ -347,17 +414,60 @@ export function ChatWindow(props: ChatWindowProps) {
     onQuoteReply,
     onSuggestionClick,
     conversationId,
+    scrollToBottomSignal = 0,
+    onRegenerate,
+    onEditMessage,
   } = props;
   const { addToast } = useToast();
   // Scroll container ref to keep view pinned to bottom.
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [streamJumpVisible, setStreamJumpVisible] = useState(false);
+  const [completionPulseIndex, setCompletionPulseIndex] = useState<
+    number | null
+  >(null);
   const isAtBottomRef = useRef(true);
   const prevMessageCountRef = useRef(messages.length);
+  const prevLastAssistantStreamingRef = useRef(false);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+  const hoverLeaveTimerRef = useRef<number | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const [feedbackRatingByKey, setFeedbackRatingByKey] = useState<
+    Record<string, 1 | -1 | null>
+  >({});
+  const [feedbackInputKey, setFeedbackInputKey] = useState<string | null>(null);
+  const [feedbackDraftByKey, setFeedbackDraftByKey] = useState<
+    Record<string, string>
+  >({});
+  const [editingUserKey, setEditingUserKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
+  const clearHoverLeaveTimer = () => {
+    if (hoverLeaveTimerRef.current != null) {
+      window.clearTimeout(hoverLeaveTimerRef.current);
+      hoverLeaveTimerRef.current = null;
+    }
+  };
+
+  const enterMessageHover = (id: string) => {
+    clearHoverLeaveTimer();
+    setHoveredMessageId(id);
+  };
+
+  const leaveMessageHover = () => {
+    clearHoverLeaveTimer();
+    hoverLeaveTimerRef.current = window.setTimeout(() => {
+      setHoveredMessageId(null);
+    }, 100);
+  };
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
 
   const handleScrollToBottom = () => {
     if (!scrollRef.current) return;
@@ -366,22 +476,84 @@ export function ChatWindow(props: ChatWindowProps) {
     isAtBottomRef.current = true;
     setIsAtBottom(true);
     setUnreadCount(0);
+    setStreamJumpVisible(false);
   };
 
+  const hasMessages = messages.length > 0;
+
   useEffect(() => {
-    if (scrollRef.current && isAtBottomRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    prevLastAssistantStreamingRef.current = false;
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!scrollToBottomSignal) return;
+    const id = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+        isAtBottomRef.current = true;
+        setIsAtBottom(true);
+        setUnreadCount(0);
+        setStreamJumpVisible(false);
+      });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [scrollToBottomSignal]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !hasMessages) return;
+
+    const last = messages[messages.length - 1];
+    const streamingAssist =
+      last?.role === "assistant" && Boolean(last.isStreaming);
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = remaining < 100;
+
+    if (streamingAssist) {
+      if (nearBottom) {
+        el.scrollTop = el.scrollHeight;
+        isAtBottomRef.current = true;
+        setIsAtBottom(true);
+        setUnreadCount(0);
+        setStreamJumpVisible(false);
+      } else if (String(last.content ?? "").length > 0) {
+        setStreamJumpVisible(true);
+      }
+      return;
     }
-  }, [messages, isLoading]);
+
+    setStreamJumpVisible(false);
+    if (isAtBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, isLoading, hasMessages]);
+
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    const now =
+      last?.role === "assistant" ? Boolean(last.isStreaming) : false;
+    const prev = prevLastAssistantStreamingRef.current;
+
+    if (last?.role === "assistant" && prev === true && now === false) {
+      const idx = messages.length - 1;
+      setCompletionPulseIndex(idx);
+      const t = window.setTimeout(() => setCompletionPulseIndex(null), 650);
+      prevLastAssistantStreamingRef.current = now;
+      return () => window.clearTimeout(t);
+    }
+
+    prevLastAssistantStreamingRef.current = now;
+  }, [messages]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
     const handleScroll = () => {
-      // Consider "at bottom" when within 20px of the bottom.
       const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const atBottom = remaining < 20;
+      const atBottom = remaining < 100;
       isAtBottomRef.current = atBottom;
       setIsAtBottom(atBottom);
       if (atBottom) setUnreadCount(0);
@@ -402,39 +574,6 @@ export function ChatWindow(props: ChatWindowProps) {
     }
     prevMessageCountRef.current = next;
   }, [messages.length]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        menuRef.current &&
-        event.target instanceof Node &&
-        !menuRef.current.contains(event.target)
-      ) {
-        setOpenMenuIndex(null);
-      }
-    };
-
-    if (openMenuIndex !== null) {
-      window.addEventListener("mousedown", handleClickOutside);
-    }
-
-    return () => {
-      window.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [openMenuIndex]);
-
-  useEffect(() => {
-    if (openMenuIndex === null) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpenMenuIndex(null);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [openMenuIndex]);
-
-  const hasMessages = messages.length > 0;
 
   const renderedMessages = useMemo(
     () =>
@@ -458,28 +597,25 @@ export function ChatWindow(props: ChatWindowProps) {
         const searchQuery = chatMessage.search_query;
 
         const plainText = String(message.content ?? "");
+        const messageKey = chatMessage.id ?? `local-${index}`;
+        const markdownCopyText =
+          chatMessage.response_type === "plot" && chatMessage.plot_json
+            ? "```json\n" +
+              JSON.stringify(chatMessage.plot_json, null, 2) +
+              "\n```"
+            : chatMessage.response_type === "image" && chatMessage.image_url
+              ? chatMessage.image_url
+              : plainText;
+
         const isThinking =
           !isUser &&
+          Boolean(isLoading) &&
           chatMessage.isStreaming &&
           plainText.trim().length === 0 &&
           (chatMessage.response_type === "text" || !chatMessage.response_type);
         const segments = isUser
           ? parseContentSegments(plainText)
           : ([] as ReturnType<typeof parseContentSegments>);
-
-        const handleCopy = async (event: ReactMouseEvent<HTMLButtonElement>) => {
-          try {
-            spawnRipple(event.currentTarget, event.clientX, event.clientY);
-            await window.navigator.clipboard.writeText(plainText);
-            setCopiedIndex(index);
-            addToast("Copied to clipboard", "success");
-            window.setTimeout(() => {
-              setCopiedIndex((current) => (current === index ? null : current));
-            }, 2000);
-          } catch {
-            // Swallow clipboard errors silently for now.
-          }
-        };
 
         const handleReplyWithQuote = () => {
           if (!onQuoteReply) return;
@@ -489,13 +625,66 @@ export function ChatWindow(props: ChatWindowProps) {
             trimmed.length > 80 ? `${trimmed.slice(0, 80)}...` : trimmed;
           const quoted = `> ${preview}\n\n`;
           onQuoteReply(quoted);
-          setOpenMenuIndex(null);
+        };
+
+        const copyPlain = async () => {
+          try {
+            await window.navigator.clipboard.writeText(plainText);
+            addToast("Copied to clipboard", "success");
+          } catch {
+            addToast("Could not copy", "error");
+            throw new Error("copy failed");
+          }
+        };
+
+        const copyMd = async () => {
+          try {
+            await window.navigator.clipboard.writeText(markdownCopyText);
+            addToast("Copied to clipboard", "success");
+          } catch {
+            addToast("Could not copy", "error");
+            throw new Error("copy failed");
+          }
+        };
+
+        const submitBarFeedback = async (rating: 1 | -1, text: string) => {
+          if (!conversationId) return;
+          try {
+            await submitFeedback({
+              conversation_id: conversationId,
+              message_id: chatMessage.id,
+              message_content: plainText,
+              rating,
+              feedback_text: text || undefined,
+            });
+            addToast("Thanks for your feedback", "success");
+          } catch {
+            addToast("Could not send feedback", "error");
+            throw new Error("feedback failed");
+          }
+        };
+
+        const showActionBar =
+          isUser
+            ? editingUserKey !== messageKey
+            : !chatMessage.isStreaming;
+
+        const setRatingForMessage = (r: 1 | -1 | null) => {
+          setFeedbackRatingByKey((prev) => ({ ...prev, [messageKey]: r }));
+          if (r !== -1) {
+            setFeedbackInputKey((k) => (k === messageKey ? null : k));
+            setFeedbackDraftByKey((prev) => {
+              const next = { ...prev };
+              delete next[messageKey];
+              return next;
+            });
+          }
         };
 
         return (
           <div
-            key={index}
-            className={`group flex w-full flex-col gap-1.5 ${alignClass} ${
+            key={messageKey}
+            className={`flex w-full flex-col gap-1.5 ${alignClass} ${
               isUser ? "prism-anim-user-message" : "prism-anim-assistant-message"
             }`}
           >
@@ -516,11 +705,35 @@ export function ChatWindow(props: ChatWindowProps) {
                 <span className="uppercase">PRISM</span>
               </div>
             )}
-            <div className="flex flex-col items-start gap-1.5">
+            <div className="flex w-full flex-col items-start gap-1.5">
               <div
-                className={`${
-                  isUser ? "max-w-[62%] ml-auto mr-12" : "max-w-[78%]"
-                } rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed ${
+                className={`relative pb-9 ${isUser ? "ml-auto mr-12 w-full max-w-[62%]" : "max-w-[78%]"}`}
+                onMouseEnter={() => enterMessageHover(messageKey)}
+                onMouseLeave={leaveMessageHover}
+                onTouchStart={() => {
+                  clearLongPressTimer();
+                  longPressTimerRef.current = window.setTimeout(() => {
+                    enterMessageHover(messageKey);
+                  }, 500);
+                }}
+                onTouchEnd={clearLongPressTimer}
+                onTouchCancel={clearLongPressTimer}
+              >
+              <motion.div
+                initial={false}
+                animate={
+                  completionPulseIndex === index && !isUser
+                    ? {
+                        boxShadow: [
+                          "0 0 0px rgba(139,92,246,0)",
+                          "0 0 20px rgba(139,92,246,0.15)",
+                          "0 0 0px rgba(139,92,246,0)",
+                        ],
+                      }
+                    : {}
+                }
+                transition={{ duration: 0.6, times: [0, 0.5, 1], ease: "easeOut" }}
+                className={`w-full rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed ${
                   isUser ? `${bubbleClass} shadow-sm` : "bg-transparent text-foreground"
                 }`}
               >
@@ -575,6 +788,38 @@ export function ChatWindow(props: ChatWindowProps) {
                   chatMessage.image_url ? (
                   <ImageRenderer image_url={chatMessage.image_url} />
                 ) : isUser ? (
+                  editingUserKey === messageKey ? (
+                  <div className="w-full space-y-2">
+                    <textarea
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      rows={Math.min(18, Math.max(4, editDraft.split("\n").length + 2))}
+                      className="min-h-[100px] w-full resize-y rounded-xl border-2 border-violet-500/70 bg-black/60 px-3 py-2 text-[15px] text-white outline-none focus:border-violet-400"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
+                        onClick={() => {
+                          setEditingUserKey(null);
+                          setEditDraft("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-violet-500"
+                        onClick={() => {
+                          if (onEditMessage) onEditMessage(index, editDraft.trim());
+                          setEditingUserKey(null);
+                        }}
+                      >
+                        Save &amp; Resend
+                      </button>
+                    </div>
+                  </div>
+                  ) : (
                   <>
                     {segments.map((segment, idx) =>
                       segment.type === "text" ? (
@@ -626,51 +871,135 @@ export function ChatWindow(props: ChatWindowProps) {
                       )
                     )}
                   </>
+                  )
                 ) : (
                   <>
-                    <div className="relative min-h-[16px]">
-                      <div
-                        className={`transition-opacity duration-200 prism-thinking-shimmer ${
-                          isThinking ? "opacity-100" : "opacity-0"
-                        }`}
-                        style={{ position: "absolute", left: 0, top: 0 }}
-                        aria-hidden
-                      />
-                      <div
-                        className={`transition-opacity duration-200 ${
-                          isThinking ? "opacity-0" : "opacity-100"
-                        }`}
-                      >
-                        <AssistantMarkdown content={plainText} />
-                      </div>
-                    </div>
-                    {chatMessage.isStreaming &&
-                      !isThinking &&
-                      (chatMessage.response_type === "text" ||
-                        !chatMessage.response_type) &&
-                      plainText.trim().length > 0 && (
-                        <span className="inline-block w-0.5 h-4 bg-current ml-0.5 animate-pulse" />
+                    <div className="relative min-h-[24px]">
+                      <AnimatePresence>
+                        {isThinking && (
+                          <motion.div
+                            key="thinking"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="flex flex-col gap-1"
+                          >
+                            <ThinkingDots />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                      {!isThinking && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ duration: 0.22, ease: "easeOut" }}
+                        >
+                          <StreamingAssistantMarkdown
+                            content={plainText}
+                            isStreaming={Boolean(chatMessage.isStreaming)}
+                            lastTokenLength={chatMessage.lastTokenLength}
+                            conversationId={conversationId}
+                          />
+                          {(chatMessage.response_type === "text" ||
+                            !chatMessage.response_type) && (
+                            <StreamingCursor
+                              isStreaming={Boolean(chatMessage.isStreaming)}
+                              hasText={plainText.trim().length > 0}
+                            />
+                          )}
+                        </motion.div>
                       )}
+                    </div>
                   </>
                 )}
+              </motion.div>
+              {showActionBar && (
+                <MessageActionsBar
+                  visible={hoveredMessageId === messageKey}
+                  align={isUser ? "right" : "left"}
+                  variant={isUser ? "user" : "assistant"}
+                  markdownCopyText={markdownCopyText}
+                  onPointerEnter={() => enterMessageHover(messageKey)}
+                  onPointerLeave={leaveMessageHover}
+                  onCopyMessage={copyPlain}
+                  onCopyMarkdown={copyMd}
+                  onRegenerate={
+                    !isUser && onRegenerate
+                      ? () => onRegenerate(index)
+                      : undefined
+                  }
+                  onEdit={
+                    isUser && onEditMessage
+                      ? () => {
+                          setEditingUserKey(messageKey);
+                          setEditDraft(plainText);
+                        }
+                      : undefined
+                  }
+                  onQuote={
+                    !isUser && onQuoteReply ? handleReplyWithQuote : undefined
+                  }
+                  showRegenerateSpinner={false}
+                  conversationId={conversationId ?? null}
+                  feedbackRating={feedbackRatingByKey[messageKey] ?? null}
+                  onFeedbackRatingChange={setRatingForMessage}
+                  feedbackInputOpen={feedbackInputKey === messageKey}
+                  onFeedbackInputOpenChange={(open) =>
+                    setFeedbackInputKey(open ? messageKey : null)
+                  }
+                  feedbackDraft={feedbackDraftByKey[messageKey] ?? ""}
+                  onFeedbackDraftChange={(v) =>
+                    setFeedbackDraftByKey((prev) => ({
+                      ...prev,
+                      [messageKey]: v,
+                    }))
+                  }
+                  onSubmitFeedback={submitBarFeedback}
+                />
+              )}
               </div>
 
-              {!isUser && baseModelId === "auto" && routedTo && (
-                <div className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[#7c3aed]/10 bg-gradient-to-r from-[#7c3aed]/[0.06] to-[#2563eb]/[0.06] px-2 py-1 text-xs leading-snug text-muted-foreground dark:border-[#7c3aed]/15 dark:from-[#7c3aed]/[0.08] dark:to-[#2563eb]/[0.08]">
-                  <span
-                    className="mt-px shrink-0 text-[12px] leading-none text-muted-foreground"
-                    aria-hidden
-                  >
-                    ✦
-                  </span>
-                  <span className="whitespace-pre-wrap text-muted-foreground">
-                    Auto-routed to{" "}
-                    {routedTo === "coding" ? "Coding" : "Writing"}
-                    {routingReason
-                      ? ` · ${routingReason}`
-                      : " based on your request."}
-                  </span>
-                </div>
+              {!isUser && baseModelId === "auto" && (
+                <AnimatePresence mode="wait">
+                  {chatMessage.isStreaming && !routedTo ? (
+                    <motion.div
+                      key="routing-shimmer"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="prism-routing-shimmer-pill max-w-[80%]"
+                      aria-hidden
+                    />
+                  ) : routedTo ? (
+                    <motion.div
+                      key="routing-badge"
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 380,
+                        damping: 28,
+                      }}
+                      className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[#7c3aed]/10 bg-gradient-to-r from-[#7c3aed]/[0.06] to-[#2563eb]/[0.06] px-2 py-1 text-xs leading-snug text-muted-foreground dark:border-[#7c3aed]/15 dark:from-[#7c3aed]/[0.08] dark:to-[#2563eb]/[0.08]"
+                    >
+                      <span
+                        className="mt-px shrink-0 text-[12px] leading-none text-muted-foreground"
+                        aria-hidden
+                      >
+                        ✦
+                      </span>
+                      <span className="whitespace-pre-wrap text-muted-foreground">
+                        Auto-routed to{" "}
+                        {routedTo === "coding" ? "Coding" : "Writing"}
+                        {routingReason
+                          ? ` · ${routingReason}`
+                          : " based on your request."}
+                      </span>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
               )}
 
               {!isUser && searchUsed && (
@@ -710,75 +1039,27 @@ export function ChatWindow(props: ChatWindowProps) {
                 </div>
               )}
 
-              {/* Feedback widget — only rendered for completed assistant messages */}
-              {!isUser && !chatMessage.isStreaming && conversationId && (
-                <MessageFeedback
-                  messageContent={plainText}
-                  conversationId={conversationId}
-                />
-              )}
-
-              {!isUser && (
-                <div className="mt-1 flex w-full justify-end opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-                  <div className="flex items-center gap-1.5 text-xs" ref={menuRef}>
-                    <button
-                      type="button"
-                      onClick={handleCopy}
-                      title="Copy"
-                      className={`relative overflow-hidden inline-flex items-center justify-center rounded-full border border-transparent bg-transparent px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-muted/70 ${
-                        copiedIndex === index ? "prism-copy-flash-bg" : ""
-                      }`}
-                    >
-                      <span className="relative inline-flex size-[14px] items-center justify-center">
-                        <Copy
-                          className={`absolute inset-0 transition-opacity duration-150 ${
-                            copiedIndex === index ? "opacity-0" : "opacity-100"
-                          }`}
-                          aria-hidden
-                        />
-                        <Check
-                          className={`absolute inset-0 transition-opacity duration-150 ${
-                            copiedIndex === index ? "opacity-100" : "opacity-0"
-                          }`}
-                          aria-hidden
-                        />
-                      </span>
-                    </button>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setOpenMenuIndex((current) =>
-                            current === index ? null : index
-                          )
-                        }
-                        className="inline-flex items-center justify-center rounded-full border border-transparent bg-transparent px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-muted/70"
-                        aria-expanded={openMenuIndex === index}
-                        aria-haspopup="menu"
-                      >
-                        <ChevronDown className="size-[14px]" />
-                      </button>
-                      {openMenuIndex === index && (
-                        <div className="absolute right-0 z-40 mt-1 w-40 rounded-md border bg-popover p-1 text-left text-[11px] shadow-md">
-                          <button
-                            type="button"
-                            onClick={handleReplyWithQuote}
-                            className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1.5 text-xs text-foreground hover:bg-muted"
-                          >
-                            <Quote className="size-[14px]" />
-                            <span>Reply with quote</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         );
       }),
-    [messages, modelsById, copiedIndex, onQuoteReply, openMenuIndex, addToast]
+    [
+      messages,
+      modelsById,
+      onQuoteReply,
+      addToast,
+      conversationId,
+      isLoading,
+      completionPulseIndex,
+      hoveredMessageId,
+      editingUserKey,
+      editDraft,
+      feedbackRatingByKey,
+      feedbackInputKey,
+      feedbackDraftByKey,
+      onRegenerate,
+      onEditMessage,
+    ]
   );
 
   return (
@@ -842,6 +1123,20 @@ export function ChatWindow(props: ChatWindowProps) {
       ) : (
         <div className="mx-auto flex w-full max-w-[768px] flex-col gap-6">
           {renderedMessages}
+        </div>
+      )}
+
+      {streamJumpVisible && (
+        <div className="absolute bottom-32 right-8 z-20">
+          <button
+            type="button"
+            onClick={handleScrollToBottom}
+            className="prism-stream-new-content-btn inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] px-4 py-2 text-xs font-medium text-white shadow-lg"
+            aria-label="Scroll to new streamed content"
+          >
+            <span aria-hidden>↓</span>
+            <span>New content</span>
+          </button>
         </div>
       )}
 
