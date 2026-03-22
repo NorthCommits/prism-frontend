@@ -2,12 +2,14 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
+  ArrowRight,
   ChevronDown,
   Copy,
   Eye,
@@ -33,6 +35,7 @@ import rehypeRaw from "rehype-raw";
 import type { Components } from "react-markdown";
 import { AnimatePresence, motion } from "motion/react";
 import { useToast } from "@/components/Toast";
+import { formatMessageTime } from "@/lib/messageTime";
 
 type ChatWindowProps = {
   messages: ChatMessage[];
@@ -442,6 +445,7 @@ export function ChatWindow(props: ChatWindowProps) {
   >({});
   const [editingUserKey, setEditingUserKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const clearHoverLeaveTimer = () => {
     if (hoverLeaveTimerRef.current != null) {
@@ -565,6 +569,25 @@ export function ChatWindow(props: ChatWindowProps) {
       el.removeEventListener("scroll", handleScroll);
     };
   }, []);
+
+  useEffect(() => {
+    if (!editingUserKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setEditingUserKey(null);
+        setEditDraft("");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editingUserKey]);
+
+  useLayoutEffect(() => {
+    const el = editTextareaRef.current;
+    if (!el || !editingUserKey) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 44)}px`;
+  }, [editDraft, editingUserKey]);
 
   useEffect(() => {
     const prev = prevMessageCountRef.current;
@@ -707,7 +730,7 @@ export function ChatWindow(props: ChatWindowProps) {
             )}
             <div className="flex w-full flex-col items-start gap-1.5">
               <div
-                className={`relative pb-9 ${isUser ? "ml-auto mr-12 w-full max-w-[62%]" : "max-w-[78%]"}`}
+                className={`group/msg relative pb-9 ${isUser ? "ml-auto mr-12 w-full max-w-[62%]" : "max-w-[78%]"}`}
                 onMouseEnter={() => enterMessageHover(messageKey)}
                 onMouseLeave={leaveMessageHover}
                 onTouchStart={() => {
@@ -789,17 +812,40 @@ export function ChatWindow(props: ChatWindowProps) {
                   <ImageRenderer image_url={chatMessage.image_url} />
                 ) : isUser ? (
                   editingUserKey === messageKey ? (
-                  <div className="w-full space-y-2">
+                  <motion.div
+                    layout
+                    className="w-full space-y-2"
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                  >
                     <textarea
+                      ref={editTextareaRef}
                       value={editDraft}
                       onChange={(e) => setEditDraft(e.target.value)}
-                      rows={Math.min(18, Math.max(4, editDraft.split("\n").length + 2))}
-                      className="min-h-[100px] w-full resize-y rounded-xl border-2 border-violet-500/70 bg-black/60 px-3 py-2 text-[15px] text-white outline-none focus:border-violet-400"
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === "Enter" &&
+                          (e.metaKey || e.ctrlKey)
+                        ) {
+                          e.preventDefault();
+                          const t = editDraft.trim();
+                          if (
+                            !t ||
+                            t === plainText.trim()
+                          ) {
+                            return;
+                          }
+                          if (onEditMessage) onEditMessage(index, t);
+                          setEditingUserKey(null);
+                          setEditDraft("");
+                        }
+                      }}
+                      rows={1}
+                      className="w-full resize-none rounded-[12px] border border-[rgba(139,92,246,0.5)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-[15px] leading-relaxed text-white outline-none transition-[min-height] duration-200 ease-out focus:border-[rgba(139,92,246,0.85)] focus:ring-2 focus:ring-[rgba(139,92,246,0.45)]"
                     />
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
+                        className="rounded-full px-3 py-1.5 text-[11px] text-white/45 transition-colors hover:bg-white/10 hover:text-white/75"
                         onClick={() => {
                           setEditingUserKey(null);
                           setEditDraft("");
@@ -809,16 +855,24 @@ export function ChatWindow(props: ChatWindowProps) {
                       </button>
                       <button
                         type="button"
-                        className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-violet-500"
+                        disabled={
+                          !editDraft.trim() ||
+                          editDraft.trim() === plainText.trim()
+                        }
+                        className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#06b6d4] px-3 py-1.5 text-[11px] font-medium text-white shadow-sm transition-opacity disabled:cursor-not-allowed disabled:opacity-40 hover:enabled:brightness-110"
                         onClick={() => {
-                          if (onEditMessage) onEditMessage(index, editDraft.trim());
+                          const t = editDraft.trim();
+                          if (!t || t === plainText.trim()) return;
+                          if (onEditMessage) onEditMessage(index, t);
                           setEditingUserKey(null);
+                          setEditDraft("");
                         }}
                       >
                         Save &amp; Resend
+                        <ArrowRight className="size-3.5" aria-hidden />
                       </button>
                     </div>
-                  </div>
+                  </motion.div>
                   ) : (
                   <>
                     {segments.map((segment, idx) =>
@@ -870,6 +924,11 @@ export function ChatWindow(props: ChatWindowProps) {
                         </div>
                       )
                     )}
+                    {chatMessage.isEdited ? (
+                      <p className="mt-1 text-[11px] text-white/40 opacity-40">
+                        Edited
+                      </p>
+                    ) : null}
                   </>
                   )
                 ) : (
@@ -914,6 +973,18 @@ export function ChatWindow(props: ChatWindowProps) {
                   </>
                 )}
               </motion.div>
+              {chatMessage.created_at &&
+                !(message.role === "assistant" && chatMessage.isStreaming) && (
+                  <div
+                    className={`mt-0.5 max-h-0 -translate-y-1 overflow-hidden opacity-0 transition-[opacity,transform,max-height] duration-150 ease-out group-hover/msg:max-h-10 group-hover/msg:translate-y-0 group-hover/msg:opacity-100 ${
+                      isUser ? "w-full text-right" : "text-left"
+                    }`}
+                  >
+                    <span className="text-[11px] italic text-[rgba(255,255,255,0.3)]">
+                      {formatMessageTime(chatMessage.created_at)}
+                    </span>
+                  </div>
+                )}
               {showActionBar && (
                 <MessageActionsBar
                   visible={hoveredMessageId === messageKey}
@@ -1125,6 +1196,14 @@ export function ChatWindow(props: ChatWindowProps) {
           {renderedMessages}
         </div>
       )}
+
+      {/* Fade thread into the floating composer (skip empty state) */}
+      {hasMessages ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-[120px] bg-gradient-to-b from-transparent to-background"
+          aria-hidden
+        />
+      ) : null}
 
       {streamJumpVisible && (
         <div className="absolute bottom-32 right-8 z-20">

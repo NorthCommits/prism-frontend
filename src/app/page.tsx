@@ -36,8 +36,26 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { useTheme } from "next-themes";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
 
 import {
   AvailableModel,
@@ -56,6 +74,11 @@ import {
 import type { Project } from "@/lib/projects";
 import { ConversationContextMenu } from "@/components/ConversationContextMenu";
 import { MobileConversationRow } from "@/components/MobileConversationRow";
+import {
+  ConversationRowDragGhost,
+  PinnedDesktopConversationRow,
+  SortableDesktopConversationRow,
+} from "@/components/SortableDesktopConversationRow";
 import { Onboarding } from "@/components/Onboarding";
 import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
@@ -182,6 +205,7 @@ function formatRelativeTime(isoDate: string): string {
 function HomeContent() {
   type UserLike = { id?: string; email?: string | null };
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
   const [modelsById, setModelsById] = useState<
     Record<ModelId, AvailableModel>
   >({} as Record<ModelId, AvailableModel>);
@@ -290,6 +314,27 @@ function HomeContent() {
     anchor: DOMRect;
   } | null>(null);
   const [contextMenuProjects, setContextMenuProjects] = useState<Project[]>([]);
+  /** Unpinned conversation ids — manual order from localStorage + drag. */
+  const [manualConvOrder, setManualConvOrder] = useState<string[]>([]);
+  const [sidebarWidth, setSidebarWidth] = useState(256);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [showSidebarResizeHint, setShowSidebarResizeHint] = useState(true);
+  const sidebarResizeDoneRef = useRef(false);
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [bulkProjects, setBulkProjects] = useState<Project[]>([]);
+  const [activeConvDragId, setActiveConvDragId] = useState<string | null>(
+    null
+  );
+  const pendingBulkDeleteTimerRef = useRef<number | null>(null);
+  const conversationsBeforeBulkDeleteRef = useRef<Conversation[] | null>(
+    null
+  );
+  const sidebarWidthLiveRef = useRef(256);
   const [installPrompt, setInstallPrompt] = useState<
     | (Event & {
         prompt: () => Promise<void>;
@@ -506,6 +551,41 @@ function HomeContent() {
   }, []);
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) {
+      sidebarWidthLiveRef.current = sidebarWidth;
+    }
+  }, [sidebarWidth, isResizingSidebar]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("prism_conv_order");
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+          setManualConvOrder(parsed);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      const w = parseInt(
+        window.localStorage.getItem("prism_sidebar_width") || "",
+        10
+      );
+      if (Number.isFinite(w) && w >= 200 && w <= 480) {
+        setSidebarWidth(w);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -576,9 +656,52 @@ function HomeContent() {
       const c = conversations.find((x) => x.id === id);
       if (c) pinned.push(c);
     }
-    const rest = conversations.filter((c) => !pinSet.has(c.id));
+    let rest = conversations.filter((c) => !pinSet.has(c.id));
+    if (manualConvOrder.length > 0) {
+      rest = [...rest].sort((a, b) => {
+        const ai = manualConvOrder.indexOf(a.id);
+        const bi = manualConvOrder.indexOf(b.id);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+    }
     return [...pinned, ...rest];
+  }, [conversations, pinnedConversationIds, manualConvOrder]);
+
+  const pinnedConversations = useMemo(() => {
+    const pinSet = new Set(pinnedConversationIds);
+    const pinned: Conversation[] = [];
+    for (const id of pinnedConversationIds) {
+      const c = conversations.find((x) => x.id === id);
+      if (c) pinned.push(c);
+    }
+    return pinned;
   }, [conversations, pinnedConversationIds]);
+
+  const unpinnedOrderedConversations = useMemo(() => {
+    const pinSet = new Set(pinnedConversationIds);
+    let rest = conversations.filter((c) => !pinSet.has(c.id));
+    if (manualConvOrder.length > 0) {
+      rest = [...rest].sort((a, b) => {
+        const ai = manualConvOrder.indexOf(a.id);
+        const bi = manualConvOrder.indexOf(b.id);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+    }
+    return rest;
+  }, [conversations, pinnedConversationIds, manualConvOrder]);
+
+  const conversationSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   useEffect(() => {
     let isCancelled = false;
@@ -626,6 +749,9 @@ function HomeContent() {
           routing_reason: message.routing_reason ?? undefined,
           search_used: message.search_used,
           search_query: message.search_query,
+          created_at: message.created_at,
+          file_used: message.file_used,
+          file_name: message.file_name ?? undefined,
         }));
         setMessages(mapped);
 
@@ -880,7 +1006,8 @@ function HomeContent() {
     message: string,
     file?: { file_name: string; file_type: string; file_content: string },
     image?: { base64: string; mediaType: string },
-    template?: { id: string; label: string }
+    template?: { id: string; label: string },
+    options?: { editedThread?: ChatMessage[] }
   ) => {
     const activeProjectId = activeProject?.id ?? null;
     console.log("Active project ID:", activeProjectId);
@@ -888,6 +1015,8 @@ function HomeContent() {
     if (!selectedModel) {
       return;
     }
+
+    const editedThread = options?.editedThread;
 
     // Reset agent progress from any previous turn.
     setIsAgentMode(false);
@@ -898,44 +1027,68 @@ function HomeContent() {
 
     setLastSentMessage(message);
 
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: message,
-      file_used: !!file,
-      file_name: file?.file_name,
-      file_type: file?.file_type,
-      file_content: file?.file_content,
-      // Stored in message state for inline display; excluded from history.
-      image_base64: image?.base64,
-      image_media_type: image?.mediaType,
-      image_used: !!image,
-    };
-
+    let userMessage: ChatMessage;
     let conversationId = activeConversationId;
 
-    if (!conversationId) {
-      try {
-        const title = message.trim() || "New conversation";
-        const conversation = await createConversation(
-          title.length > 35 ? title.slice(0, 35).trimEnd() : title,
-          selectedModel
-        );
-        if (activeProjectId) {
-          await linkConversationToProject(conversation.id, activeProjectId);
-          console.log("Linked to project:", activeProjectId);
-        }
-        conversationId = conversation.id;
-        setActiveConversationId(conversation.id);
-        setNewConversationId(conversation.id);
-        window.setTimeout(() => {
-          setNewConversationId((current) =>
-            current === conversation.id ? null : current
-          );
-        }, 300);
-        await refreshConversations();
-      } catch {
+    if (editedThread) {
+      const lastUser = editedThread[editedThread.length - 1];
+      if (!lastUser || lastUser.role !== "user") {
         return;
+      }
+      if (!conversationId) {
+        return;
+      }
+      userMessage = {
+        ...lastUser,
+        content: message,
+        file_used: !!file,
+        file_name: file?.file_name,
+        file_type: file?.file_type,
+        file_content: file?.file_content,
+        image_base64: image?.base64,
+        image_media_type: image?.mediaType,
+        image_used: !!image,
+        model_id: selectedModel,
+      };
+    } else {
+      userMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: message,
+        model_id: selectedModel,
+        created_at: new Date().toISOString(),
+        file_used: !!file,
+        file_name: file?.file_name,
+        file_type: file?.file_type,
+        file_content: file?.file_content,
+        image_base64: image?.base64,
+        image_media_type: image?.mediaType,
+        image_used: !!image,
+      };
+
+      if (!conversationId) {
+        try {
+          const title = message.trim() || "New conversation";
+          const conversation = await createConversation(
+            title.length > 35 ? title.slice(0, 35).trimEnd() : title,
+            selectedModel
+          );
+          if (activeProjectId) {
+            await linkConversationToProject(conversation.id, activeProjectId);
+            console.log("Linked to project:", activeProjectId);
+          }
+          conversationId = conversation.id;
+          setActiveConversationId(conversation.id);
+          setNewConversationId(conversation.id);
+          window.setTimeout(() => {
+            setNewConversationId((current) =>
+              current === conversation.id ? null : current
+            );
+          }, 300);
+          await refreshConversations();
+        } catch {
+          return;
+        }
       }
     }
 
@@ -951,32 +1104,42 @@ function HomeContent() {
         file_used: !!file,
         file_name: file?.file_name,
       });
-      persistedUser = { ...userMessage, id: savedUser.id };
+      persistedUser = {
+        ...userMessage,
+        id: savedUser.id,
+        created_at: savedUser.created_at ?? userMessage.created_at,
+      };
     } catch {
       // Ignore message save failure for user message.
     }
 
-    // Include model_id so the backend context-compression layer can annotate
-    // model-switch boundaries (e.g. coding → writing) between turns.
-    const history: HistoryMessage[] = messages.map((item) => ({
-      role: item.role,
-      content: String(item.content),
-      model_id: item.model_id || item.routed_to || undefined,
-    }));
+    const historySource = editedThread ?? messages;
+    const historyEnd = editedThread ? editedThread.length - 1 : historySource.length;
+    const history: HistoryMessage[] = historySource
+      .slice(0, historyEnd)
+      .map((item) => ({
+        role: item.role,
+        content: String(item.content),
+        model_id: item.model_id || item.routed_to || undefined,
+      }));
 
-    // Create a placeholder assistant message and stream the response into it.
     const assistantPlaceholder: ChatMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
       content: "",
       model_id: selectedModel,
       isStreaming: true,
-      // Store the pre-formatted label so ChatWindow can render the badge without
-      // waiting for the backend to echo the template id back.
       active_template_label: template?.label,
     };
 
-    const initialMessages = [...messages, persistedUser, assistantPlaceholder];
+    const priorForInitial = editedThread
+      ? editedThread.slice(0, -1)
+      : messages;
+    const initialMessages = [
+      ...priorForInitial,
+      persistedUser,
+      assistantPlaceholder,
+    ];
     setMessages(initialMessages);
 
     let assistantContent = "";
@@ -1082,7 +1245,11 @@ function HomeContent() {
                 const next = [...prev];
                 const li = next.length - 1;
                 if (li >= 0 && next[li].role === "assistant") {
-                  next[li] = { ...next[li], id: savedAssistant.id };
+                  next[li] = {
+                    ...next[li],
+                    id: savedAssistant.id,
+                    created_at: savedAssistant.created_at,
+                  };
                 }
                 return next;
               });
@@ -1190,10 +1357,229 @@ function HomeContent() {
   const handleEditMessage = (messageIndex: number, newContent: string) => {
     const trimmed = newContent.trim();
     if (!trimmed) return;
-    setMessages((prev) => prev.slice(0, messageIndex));
-    queueMicrotask(() => {
-      void handleSend(trimmed);
+    if (isLoading) return;
+    const prev = messagesRef.current;
+    const orig = prev[messageIndex];
+    if (!orig || orig.role !== "user") return;
+    if (!activeConversationId) return;
+
+    const file =
+      orig.file_used &&
+      orig.file_name &&
+      orig.file_type &&
+      orig.file_content
+        ? {
+            file_name: orig.file_name,
+            file_type: orig.file_type,
+            file_content: orig.file_content,
+          }
+        : undefined;
+    const image = orig.image_base64
+      ? {
+          base64: orig.image_base64,
+          mediaType: orig.image_media_type ?? "image/jpeg",
+        }
+      : undefined;
+
+    const updated: ChatMessage = {
+      ...orig,
+      content: trimmed,
+      isEdited: true,
+      originalContent: orig.originalContent ?? String(orig.content ?? ""),
+    };
+    const nextThread = [...prev.slice(0, messageIndex), updated];
+    setMessages(nextThread);
+    void handleSend(trimmed, file, image, undefined, {
+      editedThread: nextThread,
     });
+  };
+
+  const exitBulkSelect = useCallback(() => {
+    setBulkSelectMode(false);
+    setBulkSelectedIds(new Set());
+    setBulkDeleteConfirmOpen(false);
+    setBulkMoveOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!bulkSelectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitBulkSelect();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bulkSelectMode, exitBulkSelect]);
+
+  useEffect(() => {
+    if (!isResizingSidebar || isMobile) return;
+    const onMove = (e: MouseEvent) => {
+      const next = Math.min(480, Math.max(200, e.clientX));
+      sidebarWidthLiveRef.current = next;
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      setIsResizingSidebar(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try {
+        window.localStorage.setItem(
+          "prism_sidebar_width",
+          String(sidebarWidthLiveRef.current)
+        );
+      } catch {
+        /* ignore */
+      }
+      if (!sidebarResizeDoneRef.current) {
+        sidebarResizeDoneRef.current = true;
+        setShowSidebarResizeHint(false);
+      }
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizingSidebar, isMobile]);
+
+  const handleConversationDragStart = (event: DragStartEvent) => {
+    setActiveConvDragId(String(event.active.id));
+  };
+
+  const handleConversationDragEnd = (event: DragEndEvent) => {
+    setActiveConvDragId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = unpinnedOrderedConversations.map((c) => c.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const nextOrder = arrayMove(ids, oldIndex, newIndex);
+    setManualConvOrder(nextOrder);
+    try {
+      window.localStorage.setItem(
+        "prism_conv_order",
+        JSON.stringify(nextOrder)
+      );
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const toggleConversationBulkSelect = (id: string) => {
+    setBulkSelectMode(true);
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const enterBulkViaLongPress = (id: string) => {
+    setBulkSelectMode(true);
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisibleConversations = () => {
+    setBulkSelectMode(true);
+    setBulkSelectedIds(new Set(orderedConversations.map((c) => c.id)));
+  };
+
+  const openBulkMoveMenu = () => {
+    setBulkMoveOpen((v) => !v);
+    void getProjects()
+      .then(setBulkProjects)
+      .catch(() => setBulkProjects([]));
+  };
+
+  const runBulkLinkToProject = async (projectId: string | null) => {
+    const ids = [...bulkSelectedIds];
+    if (ids.length === 0) return;
+    const proj =
+      projectId === null
+        ? null
+        : bulkProjects.find((p) => p.id === projectId);
+    try {
+      for (const id of ids) {
+        await linkConversationToProject(id, projectId);
+      }
+      pushToast(
+        projectId && proj
+          ? `Moved ${ids.length} to ${proj.name}`
+          : `Unlinked ${ids.length} conversations`,
+        "success"
+      );
+      await refreshConversations();
+      exitBulkSelect();
+    } catch {
+      pushToast("Could not update conversations", "error");
+    }
+    setBulkMoveOpen(false);
+  };
+
+  const executeBulkDeleteAfterConfirm = () => {
+    setBulkDeleteConfirmOpen(false);
+    const ids = [...bulkSelectedIds];
+    if (ids.length === 0) {
+      exitBulkSelect();
+      return;
+    }
+    conversationsBeforeBulkDeleteRef.current = [...conversations];
+    const hadActive =
+      activeConversationId !== null && ids.includes(activeConversationId);
+    setConversations((prev) => prev.filter((c) => !ids.includes(c.id)));
+    if (hadActive) {
+      setActiveConversationId(null);
+      setMessages([]);
+    }
+    exitBulkSelect();
+    pushToast(`Deleting ${ids.length} conversations…`, "info", {
+      durationMs: 2000,
+    });
+    if (pendingBulkDeleteTimerRef.current !== null) {
+      window.clearTimeout(pendingBulkDeleteTimerRef.current);
+    }
+    pendingBulkDeleteTimerRef.current = window.setTimeout(async () => {
+      pendingBulkDeleteTimerRef.current = null;
+      for (const id of ids) {
+        try {
+          await deleteConversation(id);
+        } catch {
+          /* ignore per-item errors */
+        }
+      }
+      conversationsBeforeBulkDeleteRef.current = null;
+      await refreshConversations();
+    }, 5000);
+    pushToast(
+      `${ids.length} conversation${ids.length === 1 ? "" : "s"} will be removed`,
+      "success",
+      {
+        durationMs: 5000,
+        actionLabel: "Undo",
+        onAction: () => {
+          if (pendingBulkDeleteTimerRef.current !== null) {
+            window.clearTimeout(pendingBulkDeleteTimerRef.current);
+            pendingBulkDeleteTimerRef.current = null;
+          }
+          const snap = conversationsBeforeBulkDeleteRef.current;
+          conversationsBeforeBulkDeleteRef.current = null;
+          if (snap) {
+            setConversations(snap);
+          }
+          pushToast("Delete cancelled", "info");
+        },
+      }
+    );
   };
 
   const handleQuoteReply = (quotedText: string) => {
@@ -1206,6 +1592,53 @@ function HomeContent() {
         inputRef.current.setSelectionRange(length, length);
       }
     }, 0);
+  };
+
+  const getConversationRowChrome = (conversation: Conversation) => {
+    const isActive = conversation.id === activeConversationId;
+    const animClass = `${
+      conversation.id === newConversationId ? "prism-conv-enter" : ""
+    } ${
+      deletingConversationId === conversation.id
+        ? deletingConversationStage === "out"
+          ? "prism-conv-delete-out"
+          : "prism-conv-delete-collapse"
+        : ""
+    } ${isActive ? "prism-conv-active" : ""}`;
+    const rowSurfaceActive =
+      "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:z-10 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]";
+    const rowSurfaceInactiveDesktop =
+      "bg-transparent after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200";
+    const rowSurfaceInactiveMobile =
+      "bg-[#f5f3ff] dark:bg-[#0d0b1a] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200";
+    const rowSurface = isActive
+      ? rowSurfaceActive
+      : isMobile
+        ? rowSurfaceInactiveMobile
+        : rowSurfaceInactiveDesktop;
+    const cfg = getConversationIconConfig(conversation.title);
+    const IconEl = cfg.icon;
+    const iconSpan = (
+      <span
+        className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
+          isActive
+            ? `${cfg.activeBg} ${cfg.activeColor}`
+            : `${cfg.bg} ${cfg.color}`
+        }`}
+        style={{ width: 24, height: 24 }}
+      >
+        <IconEl className="size-3.5" />
+      </span>
+    );
+    const textBlock = (
+      <div className="min-w-0 text-left">
+        <p className="line-clamp-1 text-foreground/90">{conversation.title}</p>
+        <p className="text-[10px] text-muted-foreground">
+          {formatRelativeTime(conversation.updated_at)}
+        </p>
+      </div>
+    );
+    return { isActive, animClass, rowSurface, iconSpan, textBlock };
   };
 
   // Warp class for the chat content area (not the sidebar or input).
@@ -1268,17 +1701,34 @@ function HomeContent() {
         {/* Fixed sidebar — lives in the stable root so position:fixed anchors
             to the viewport and is never affected by the warp animation. */}
         <aside
-          className={`fixed left-0 top-0 z-40 h-screen border-r border-border bg-[#f5f3ff] px-4 py-4 dark:bg-[#0d0b1a] overflow-hidden ${
+          className={`fixed left-0 top-0 z-40 h-screen border-r border-border bg-[#f5f3ff] py-4 dark:bg-[#0d0b1a] overflow-hidden ${
             isMobile
-              ? `w-64 transform transition-transform duration-[300ms] ease-out ${
+              ? `w-64 px-4 transform transition-transform duration-[300ms] ease-out ${
                   isSidebarCollapsed ? "-translate-x-full" : "translate-x-0"
                 }`
-              : `w-[260px] transition-[max-width] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                  isSidebarCollapsed ? "max-w-0" : "max-w-[260px]"
+              : `${
+                  isSidebarCollapsed
+                    ? "max-w-0 border-transparent px-0 transition-[max-width] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)]"
+                    : `px-4 ${
+                        isResizingSidebar
+                          ? ""
+                          : "transition-[width] duration-100 ease-out"
+                      }`
                 }`
           }`}
+          style={
+            !isMobile
+              ? isSidebarCollapsed
+                ? { width: 0, minWidth: 0, maxWidth: 0 }
+                : {
+                    width: sidebarWidth,
+                    minWidth: sidebarWidth,
+                    maxWidth: sidebarWidth,
+                  }
+              : undefined
+          }
         >
-          <div className="flex h-full flex-col">
+          <div className="relative flex h-full flex-col">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div
                 className={`flex items-center gap-2 overflow-hidden transition-opacity ${
@@ -1366,10 +1816,19 @@ function HomeContent() {
                   )}
                 </div>
 
-                {/* "Recent" label — hidden during search */}
+                {/* Recent + bulk entry (mobile uses Select; desktop also has row long-press). */}
                 {!searchQuery && (
-                  <div className="mb-2 px-3 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/50">
-                    Recent
+                  <div className="mb-2 flex items-center justify-between gap-2 px-3">
+                    <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground/50">
+                      Recent
+                    </span>
+                    <button
+                      type="button"
+                      className="text-[10px] font-medium text-violet-500/90 hover:text-violet-400 transition-colors"
+                      onClick={() => setBulkSelectMode(true)}
+                    >
+                      Select
+                    </button>
                   </div>
                 )}
 
@@ -1476,129 +1935,354 @@ function HomeContent() {
                         No conversations yet
                       </p>
                     ) : (
-                      orderedConversations.map((conversation) => {
-                        const isActive =
-                          conversation.id === activeConversationId;
-                        const animClass = `${
-                          conversation.id === newConversationId
-                            ? "prism-conv-enter"
-                            : ""
-                        } ${
-                          deletingConversationId === conversation.id
-                            ? deletingConversationStage === "out"
-                              ? "prism-conv-delete-out"
-                              : "prism-conv-delete-collapse"
-                            : ""
-                        } ${isActive ? "prism-conv-active" : ""}`;
-                        const rowSurfaceActive =
-                          "bg-[#e9ddff] dark:bg-[#2a1f44] pl-[11px] before:absolute before:left-0 before:top-0 before:bottom-0 before:z-10 before:w-[3px] before:bg-gradient-to-b before:from-[#7c3aed] before:to-[#06b6d4]";
-                        const rowSurfaceInactiveDesktop =
-                          "bg-transparent after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200";
-                        const rowSurfaceInactiveMobile =
-                          "bg-[#f5f3ff] dark:bg-[#0d0b1a] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[#ede9fe] dark:after:bg-[#1f1633] after:-translate-x-full group-hover:after:translate-x-0 after:transition-transform after:duration-200";
-                        const rowSurface = isActive
-                          ? rowSurfaceActive
-                          : isMobile
-                            ? rowSurfaceInactiveMobile
-                            : rowSurfaceInactiveDesktop;
-
-                        const cfg = getConversationIconConfig(
-                          conversation.title
-                        );
-                        const IconEl = cfg.icon;
-                        const iconSpan = (
-                          <span
-                            className={`flex shrink-0 items-center justify-center rounded-md transition-colors duration-200 ${
-                              isActive
-                                ? `${cfg.activeBg} ${cfg.activeColor}`
-                                : `${cfg.bg} ${cfg.color}`
-                            }`}
-                            style={{ width: 24, height: 24 }}
-                          >
-                            <IconEl className="size-3.5" />
-                          </span>
-                        );
-                        const textBlock = (
-                          <div className="min-w-0 text-left">
-                            <p className="line-clamp-1 text-foreground/90">
-                              {conversation.title}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {formatRelativeTime(conversation.updated_at)}
-                            </p>
-                          </div>
-                        );
-
-                        if (isMobile) {
-                          return (
-                            <MobileConversationRow
-                              key={conversation.id}
-                              className={`group ${animClass}`}
-                              conversationId={conversation.id}
-                              swipeOpenId={swipeOpenConversationId}
-                              onSwipeOpenChange={setSwipeOpenConversationId}
-                              onOpen={() => {
-                                setSwipeOpenConversationId(null);
-                                void handleOpenConversation(conversation.id);
-                              }}
-                              onDeletePress={() =>
-                                requestDeleteConversation(conversation.id)
-                              }
-                              onLongPress={(rect) =>
-                                void openConversationContextMenu(
-                                  conversation,
-                                  rect
-                                )
-                              }
+                      <>
+                        {!isMobile ? (
+                          <>
+                            {pinnedConversations.map((conversation) => {
+                              const { animClass, rowSurface, iconSpan, textBlock } =
+                                getConversationRowChrome(conversation);
+                              return (
+                                <PinnedDesktopConversationRow
+                                  key={conversation.id}
+                                  animClass={`group ${animClass}`}
+                                  rowSurface={rowSurface}
+                                  topicIcon={iconSpan}
+                                  textBlock={textBlock}
+                                  bulkSelectMode={bulkSelectMode}
+                                  isSelected={bulkSelectedIds.has(
+                                    conversation.id
+                                  )}
+                                  onToggleSelected={() =>
+                                    toggleConversationBulkSelect(
+                                      conversation.id
+                                    )
+                                  }
+                                  onBulkLongPress={() =>
+                                    enterBulkViaLongPress(conversation.id)
+                                  }
+                                  onOpen={() =>
+                                    void handleOpenConversation(
+                                      conversation.id
+                                    )
+                                  }
+                                  onDelete={() =>
+                                    handleDeleteConversation(conversation.id)
+                                  }
+                                />
+                              );
+                            })}
+                            <DndContext
+                              sensors={conversationSensors}
+                              collisionDetection={closestCenter}
+                              onDragStart={handleConversationDragStart}
+                              onDragEnd={handleConversationDragEnd}
                             >
-                              <div
-                                className={`relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface}`}
+                              <SortableContext
+                                items={unpinnedOrderedConversations.map(
+                                  (c) => c.id
+                                )}
+                                strategy={verticalListSortingStrategy}
                               >
-                                {iconSpan}
-                                {textBlock}
-                              </div>
-                            </MobileConversationRow>
-                          );
-                        }
-
-                        return (
-                          <div
-                            key={conversation.id}
-                            className={`group relative flex cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface} ${animClass}`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleOpenConversation(conversation.id)
-                              }
-                              className="relative z-20 flex min-w-0 flex-1 items-center gap-2"
-                            >
-                              {iconSpan}
-                              {textBlock}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleDeleteConversation(conversation.id);
-                              }}
-                              className="relative z-20 opacity-0 transition-opacity group-hover:opacity-100"
-                              aria-label="Delete conversation"
-                            >
-                              <Trash2 className="size-3.5 text-muted-foreground hover:text-foreground" />
-                            </button>
-                          </div>
-                        );
-                      })
+                                {unpinnedOrderedConversations.map(
+                                  (conversation) => {
+                                    const {
+                                      animClass,
+                                      rowSurface,
+                                      iconSpan,
+                                      textBlock,
+                                    } = getConversationRowChrome(conversation);
+                                    return (
+                                      <SortableDesktopConversationRow
+                                        key={conversation.id}
+                                        id={conversation.id}
+                                        animClass={`group ${animClass}`}
+                                        rowSurface={rowSurface}
+                                        topicIcon={iconSpan}
+                                        textBlock={textBlock}
+                                        bulkSelectMode={bulkSelectMode}
+                                        isSelected={bulkSelectedIds.has(
+                                          conversation.id
+                                        )}
+                                        onToggleSelected={() =>
+                                          toggleConversationBulkSelect(
+                                            conversation.id
+                                          )
+                                        }
+                                        onBulkLongPress={() =>
+                                          enterBulkViaLongPress(
+                                            conversation.id
+                                          )
+                                        }
+                                        onOpen={() =>
+                                          void handleOpenConversation(
+                                            conversation.id
+                                          )
+                                        }
+                                        onDelete={() =>
+                                          handleDeleteConversation(
+                                            conversation.id
+                                          )
+                                        }
+                                      />
+                                    );
+                                  }
+                                )}
+                              </SortableContext>
+                              <DragOverlay>
+                                {activeConvDragId ? (() => {
+                                  const dragged = conversations.find(
+                                    (c) => c.id === activeConvDragId
+                                  );
+                                  if (!dragged) return null;
+                                  const cfg = getConversationIconConfig(
+                                    dragged.title
+                                  );
+                                  const IconG = cfg.icon;
+                                  return (
+                                    <ConversationRowDragGhost
+                                      title={dragged.title}
+                                      topicIcon={
+                                        <span
+                                          className={`flex shrink-0 items-center justify-center rounded-md ${cfg.activeBg} ${cfg.activeColor}`}
+                                          style={{ width: 24, height: 24 }}
+                                        >
+                                          <IconG className="size-3.5" />
+                                        </span>
+                                      }
+                                    />
+                                  );
+                                })() : null}
+                              </DragOverlay>
+                            </DndContext>
+                          </>
+                        ) : (
+                          orderedConversations.map((conversation) => {
+                            const { animClass, rowSurface, iconSpan, textBlock } =
+                              getConversationRowChrome(conversation);
+                            return (
+                              <MobileConversationRow
+                                key={conversation.id}
+                                className={`group ${animClass}`}
+                                conversationId={conversation.id}
+                                swipeOpenId={swipeOpenConversationId}
+                                onSwipeOpenChange={setSwipeOpenConversationId}
+                                onOpen={() => {
+                                  setSwipeOpenConversationId(null);
+                                  void handleOpenConversation(conversation.id);
+                                }}
+                                onDeletePress={() =>
+                                  requestDeleteConversation(conversation.id)
+                                }
+                                onLongPress={(rect) =>
+                                  void openConversationContextMenu(
+                                    conversation,
+                                    rect
+                                  )
+                                }
+                              >
+                                <div
+                                  className={`relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface}`}
+                                >
+                                  {bulkSelectMode ? (
+                                    <label className="flex shrink-0 cursor-pointer items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={bulkSelectedIds.has(
+                                          conversation.id
+                                        )}
+                                        onChange={() =>
+                                          toggleConversationBulkSelect(
+                                            conversation.id
+                                          )
+                                        }
+                                        className="sr-only"
+                                      />
+                                      <span
+                                        className={`flex size-4 shrink-0 items-center justify-center rounded-[4px] border-[1.5px] transition-transform duration-150 ease-out ${
+                                          bulkSelectedIds.has(conversation.id)
+                                            ? "scale-110 border-transparent bg-gradient-to-br from-[#7c3aed] to-[#06b6d4]"
+                                            : "scale-100 border-[rgba(255,255,255,0.3)] bg-transparent"
+                                        }`}
+                                      >
+                                        {bulkSelectedIds.has(
+                                          conversation.id
+                                        ) ? (
+                                          <svg
+                                            className="size-2.5 text-white"
+                                            viewBox="0 0 12 12"
+                                            fill="none"
+                                            aria-hidden
+                                          >
+                                            <path
+                                              d="M2.5 6L5 8.5L9.5 3.5"
+                                              stroke="currentColor"
+                                              strokeWidth="1.75"
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                            />
+                                          </svg>
+                                        ) : null}
+                                      </span>
+                                    </label>
+                                  ) : (
+                                    iconSpan
+                                  )}
+                                  {textBlock}
+                                </div>
+                              </MobileConversationRow>
+                            );
+                          })
+                        )}
+                      </>
                     )
                   )}
                 </div>
+
+                <AnimatePresence>
+                  {bulkSelectedIds.size > 0 && (
+                    <motion.div
+                      key="bulk-bar"
+                      initial={{ y: 24, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      exit={{ y: 24, opacity: 0 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 420,
+                        damping: 32,
+                      }}
+                      className="relative z-[55] mt-2 shrink-0 rounded-b-xl border border-t border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-4 py-3 text-xs text-foreground backdrop-blur-[12px] [-webkit-backdrop-filter:blur(12px)] pointer-events-auto sticky bottom-0"
+                    >
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                          {bulkSelectedIds.size} selected
+                        </span>
+                        <button
+                          type="button"
+                          className="text-[10px] font-medium text-violet-300/90 hover:text-violet-200 transition-colors"
+                          onClick={selectAllVisibleConversations}
+                        >
+                          Select all
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-full border border-red-500/40 px-3 py-1.5 text-[11px] text-red-300 transition-colors hover:bg-red-500/10"
+                          onClick={() => setBulkDeleteConfirmOpen(true)}
+                        >
+                          <Trash2 className="size-3.5" aria-hidden />
+                          Delete
+                        </button>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-full border border-white/15 px-3 py-1.5 text-[11px] text-foreground/90 transition-colors hover:bg-white/10"
+                            onClick={() => void openBulkMoveMenu()}
+                          >
+                            <FolderOpen className="size-3.5" aria-hidden />
+                            Move
+                          </button>
+                          {bulkMoveOpen && (
+                            <div className="absolute bottom-full left-0 z-50 mb-1 max-h-40 min-w-[180px] overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-xl">
+                              <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left text-[11px] text-muted-foreground hover:bg-muted"
+                                onClick={() => void runBulkLinkToProject(null)}
+                              >
+                                None (unlink)
+                              </button>
+                              {bulkProjects.map((p) => (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  className="w-full px-3 py-2 text-left text-[11px] hover:bg-muted"
+                                  onClick={() =>
+                                    void runBulkLinkToProject(p.id)
+                                  }
+                                >
+                                  {p.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="ml-auto inline-flex size-8 items-center justify-center rounded-full border border-white/15 text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                          aria-label="Cancel selection"
+                          onClick={exitBulkSelect}
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {bulkDeleteConfirmOpen && (
+                  <div
+                    className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+                    role="dialog"
+                    aria-modal
+                    aria-labelledby="bulk-delete-title"
+                  >
+                    <div className="w-full max-w-sm rounded-xl border border-border bg-background p-5 shadow-xl">
+                      <h2
+                        id="bulk-delete-title"
+                        className="text-sm font-semibold text-foreground"
+                      >
+                        Delete {bulkSelectedIds.size} conversations?
+                      </h2>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        This cannot be undone after a few seconds.
+                      </p>
+                      <div className="mt-4 flex justify-end gap-2">
+                        <button
+                          type="button"
+                          className="rounded-full px-4 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted"
+                          onClick={() => setBulkDeleteConfirmOpen(false)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-full bg-red-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                          onClick={executeBulkDeleteAfterConfirm}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-2 border-t border-border/60 pt-3 text-[10px] text-muted-foreground">
                   Prism v0.1.0 beta
                 </div>
             </div>
           </div>
+          {!isMobile && !isSidebarCollapsed && (
+            <div
+              className="group/sz pointer-events-auto absolute right-0 top-0 z-30 h-full w-1 cursor-col-resize"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingSidebar(true);
+              }}
+            >
+              {showSidebarResizeHint && !sidebarResizeDoneRef.current && (
+                <div className="pointer-events-none absolute right-1 top-1/2 z-[46] w-max -translate-y-1/2 translate-x-1 rounded-md border border-[rgba(139,92,246,0.35)] bg-zinc-950/95 px-2 py-1 text-[10px] text-white/80 opacity-0 shadow-lg transition-opacity duration-150 group-hover/sz:opacity-100">
+                  Drag to resize
+                </div>
+              )}
+              <div
+                className={`absolute right-0 top-0 h-full w-px transition-[opacity,background-color] duration-150 ${
+                  isResizingSidebar
+                    ? "bg-[rgba(139,92,246,0.85)]"
+                    : "bg-[rgba(139,92,246,0)] group-hover/sz:bg-[rgba(139,92,246,0.4)]"
+                }`}
+              />
+            </div>
+          )}
         </aside>
 
         {isMobile && !isSidebarCollapsed && (
@@ -1675,12 +2359,18 @@ function HomeContent() {
               setIsSidebarContentVisible(false);
             }
           }}
-          className={`flex min-h-screen flex-col transition-[margin-left] duration-[250ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
-            isMobile
-              ? "ml-0"
-              : isSidebarCollapsed
-              ? "md:ml-12"
-              : "md:ml-[260px]"
+          style={
+            !isMobile
+              ? {
+                  marginLeft: isSidebarCollapsed ? 48 : sidebarWidth,
+                  transition: isResizingSidebar
+                    ? "none"
+                    : "margin-left 0.25s cubic-bezier(0.16,1,0.3,1)",
+                }
+              : undefined
+          }
+          className={`flex min-h-screen flex-col ${
+            isMobile ? "ml-0" : ""
           } ${chatWarpClass} ${isChatShaking ? "prism-warp-chat-shake" : ""}`}
         >
           <header className="flex items-center justify-between border-b border-b-[#e0ddff] bg-white px-6 py-3 shadow-sm dark:border-b-[#1f2937] dark:bg-[#0d0b1a] transition-colors duration-200">
@@ -1845,10 +2535,11 @@ function HomeContent() {
 
         {/*
           ChatInput is fixed but lives in the stable root (no ancestor transform),
-          so it always anchors to the viewport correctly.
+          so it always anchors to the viewport correctly. Outer shell stays transparent
+          so the composer reads as floating; ChatInput uses pointer-events-auto.
         */}
         <div
-          className={`fixed inset-x-0 z-[55] ${
+          className={`pointer-events-none fixed inset-x-0 z-[55] bg-transparent px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] ${
             keyboardOpen
               ? "bottom-0"
               : "bottom-0 max-md:bottom-[calc(4rem+env(safe-area-inset-bottom))]"

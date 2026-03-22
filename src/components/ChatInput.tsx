@@ -369,14 +369,16 @@ export function ChatInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="pointer-events-auto border-t bg-background/80 backdrop-blur"
+      className="pointer-events-none bg-transparent"
     >
-      <div className="mx-auto flex w-full max-w-2xl items-end gap-2.5 px-4 py-4">
+      <div className="pointer-events-auto mx-auto flex w-full max-w-2xl items-end gap-2.5 py-4">
         {/*
           relative so the slash popup can use absolute positioning inside this box
-          and match its width exactly.
+          and match its width exactly. Frosted glass lives on the pill only.
         */}
-        <div className="relative flex-1 rounded-2xl border bg-card/95 px-3.5 py-2.5 shadow-lg">
+        <div
+          className="relative flex-1 rounded-2xl border border-border/60 bg-card/90 px-3.5 py-2.5 shadow-lg backdrop-blur-[20px] [-webkit-backdrop-filter:blur(20px)] dark:border-[rgba(255,255,255,0.08)] dark:bg-[rgba(15,15,20,0.8)]"
+        >
 
           {/* Slash-command popup */}
           {slashMenuOpen && (
@@ -647,7 +649,7 @@ export function ChatInput({
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#7c3aed33] bg-background/80 px-3 py-1 text-[11px] text-muted-foreground">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border/50 bg-background/70 px-3 py-1 text-[11px] text-muted-foreground backdrop-blur-md [-webkit-backdrop-filter:blur(12px)] dark:border-white/[0.1] dark:bg-[rgba(15,15,20,0.65)]">
             <span className="inline-flex size-2 rounded-full bg-emerald-500" />
             <span>
               {currentModel === "coding"
@@ -675,7 +677,7 @@ export function ChatInput({
           </Button>
         </div>
       </div>
-      <div className="mx-auto w-full max-w-2xl px-4 pb-2 text-[10px] text-muted-foreground">
+      <div className="pointer-events-auto mx-auto w-full max-w-2xl pb-1 text-center text-[10px] text-muted-foreground/80 drop-shadow-sm">
         Prism can make mistakes. Verify important info.
       </div>
     </form>

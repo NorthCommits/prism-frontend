@@ -17,11 +17,22 @@ export type Toast = {
   message: string;
   type: ToastType;
   exiting?: boolean;
+  /** Optional action (e.g. Undo) shown beside the message. */
+  actionLabel?: string;
+  onAction?: () => void;
+  /** Auto-dismiss delay; defaults to 2500ms, or 5000ms when an action is set. */
+  durationMs?: number;
+};
+
+type ToastOptions = {
+  actionLabel?: string;
+  onAction?: () => void;
+  durationMs?: number;
 };
 
 type ToastContextValue = {
   toasts: Toast[];
-  addToast: (message: string, type: ToastType) => void;
+  addToast: (message: string, type: ToastType, options?: ToastOptions) => void;
   removeToast: (id: string) => void;
 };
 
@@ -47,15 +58,25 @@ export function ToastProvider({
   }, []);
 
   const addToast = useCallback(
-    (message: string, type: ToastType) => {
+    (message: string, type: ToastType, options?: ToastOptions) => {
       const id = makeId();
-      const toast: Toast = { id, message, type, exiting: false };
+      const toast: Toast = {
+        id,
+        message,
+        type,
+        exiting: false,
+        actionLabel: options?.actionLabel,
+        onAction: options?.onAction,
+        durationMs: options?.durationMs,
+      };
       setToasts((prev) => [...prev, toast]);
 
-      // Auto-dismiss after 2500ms.
+      const delay =
+        options?.durationMs ??
+        (options?.actionLabel ? 5000 : 2500);
       window.setTimeout(() => {
         removeToast(id);
-      }, 2500);
+      }, delay);
     },
     [removeToast]
   );
@@ -68,9 +89,16 @@ export function ToastProvider({
       const detail = (e as CustomEvent).detail as {
         message: string;
         type: ToastType;
+        actionLabel?: string;
+        onAction?: () => void;
+        durationMs?: number;
       };
       if (!detail) return;
-      addToast(detail.message, detail.type);
+      addToast(detail.message, detail.type, {
+        actionLabel: detail.actionLabel,
+        onAction: detail.onAction,
+        durationMs: detail.durationMs,
+      });
     };
     window.addEventListener("prism-toast", handler as EventListener);
     return () => {
@@ -94,11 +122,15 @@ export function useToast() {
   return ctx;
 }
 
-export function pushToast(message: string, type: ToastType) {
+export function pushToast(
+  message: string,
+  type: ToastType,
+  extra?: ToastOptions
+) {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
     new CustomEvent("prism-toast", {
-      detail: { message, type },
+      detail: { message, type, ...extra },
     })
   );
 }
@@ -144,6 +176,18 @@ export function ToastContainer() {
               <div className="text-[14px] font-medium leading-relaxed text-foreground">
                 {t.message}
               </div>
+              {t.actionLabel && t.onAction && (
+                <button
+                  type="button"
+                  className="mt-2 text-xs font-semibold text-[#7c3aed] hover:text-[#a78bfa] transition-colors"
+                  onClick={() => {
+                    t.onAction?.();
+                    removeToast(t.id);
+                  }}
+                >
+                  {t.actionLabel}
+                </button>
+              )}
             </div>
             <button
               type="button"

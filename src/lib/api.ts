@@ -33,6 +33,12 @@ export interface ChatMessage {
   active_template?: string;
   // Pre-formatted display label ("{icon} {title}") — set locally, not from backend.
   active_template_label?: string;
+  /** ISO timestamp from the server or client when the message was created. */
+  created_at?: string;
+  /** First version of text before an edit (local metadata). */
+  originalContent?: string;
+  /** True after the user edited and resent this message. */
+  isEdited?: boolean;
 }
 
 export interface ChatResponse {
