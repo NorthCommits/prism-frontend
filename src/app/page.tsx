@@ -90,6 +90,7 @@ import {
   Conversation,
   SearchResult,
   deleteConversation,
+  embedAllConversations,
   getConversations,
   getConversationMessages,
   createConversation,
@@ -734,6 +735,26 @@ function HomeContent() {
       // Ignore refresh failures; existing state remains.
     }
   };
+
+  // One-time per tab: refresh conversation embeddings for smart suggestions (non-blocking).
+  useEffect(() => {
+    if (!user || isConversationsLoading) return;
+    if (typeof window === "undefined") return;
+    try {
+      const hasEmbedded = sessionStorage.getItem("prism_bulk_embedded");
+      if (hasEmbedded) return;
+      sessionStorage.setItem("prism_bulk_embedded", "true");
+      void embedAllConversations().then((result) => {
+        if (result) {
+          console.log(
+            `Embedded ${result.embedded}/${result.total} conversations`
+          );
+        }
+      });
+    } catch {
+      /* sessionStorage unavailable */
+    }
+  }, [user, isConversationsLoading]);
 
   const openConversationById = useCallback(
     async (id: string, knownConv?: Conversation) => {
@@ -2569,6 +2590,15 @@ function HomeContent() {
                   pushToast("Failed to link project", "error");
                 }
               }
+            }}
+            onSelectSuggestion={(convId) => {
+              const conv = conversations.find((c) => c.id === convId);
+              if (conv) {
+                void openConversationById(convId, conv);
+              } else {
+                void openConversationById(convId);
+              }
+              setInputValue("");
             }}
           />
         </div>

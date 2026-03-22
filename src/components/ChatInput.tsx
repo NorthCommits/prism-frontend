@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   BookOpen,
   CheckSquare,
+  Clock,
   FileCode,
   FileSpreadsheet,
   FileText,
@@ -23,6 +24,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import type { Project } from "@/lib/projects";
 
@@ -40,7 +42,27 @@ import { Button } from "@/components/ui/button";
 import type { AvailableModel, ModelId, ParsedFile } from "../lib/api";
 import { parseFile } from "../lib/api";
 import { getTemplates, Template } from "../lib/templates";
+import { getSmartSuggestions, type Suggestion } from "@/lib/history";
 import { useToast } from "@/components/Toast";
+
+function getRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  return `${Math.floor(diffDays / 30)}mo ago`;
+}
+
+/** Min length + at least one token longer than 3 chars (matches suggestion fetch rules). */
+function suggestionsInputEligible(trimmed: string): boolean {
+  if (trimmed.length < 4) return false;
+  return trimmed.split(" ").some((w) => w.length > 3);
+}
 
 type AttachedFile = ParsedFile & {
   status: "idle" | "parsing" | "error";
@@ -73,6 +95,8 @@ type ChatInputProps = {
   /** Currently linked project — null means no project linked. */
   activeProject?: Project | null;
   onActiveProjectChange?: (project: Project | null) => void;
+  /** Open a related conversation from smart suggestions (preferred over full navigation). */
+  onSelectSuggestion?: (conversationId: string) => void;
 };
 
 export function ChatInput({
@@ -85,6 +109,7 @@ export function ChatInput({
   currentModel,
   activeProject,
   onActiveProjectChange,
+  onSelectSuggestion,
 }: ChatInputProps) {
   const internalRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? internalRef;
@@ -111,6 +136,15 @@ export function ChatInput({
   const [isInputShaking, setIsInputShaking] = useState(false);
   const [isSuccessFlash, setIsSuccessFlash] = useState(false);
   const prevIsLoadingRef = useRef<boolean>(isLoading);
+
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const suggestionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const suggestionsAbortRef = useRef<AbortController | null>(null);
+  const suggestionInputRef = useRef<string>("");
 
   // Fetch templates once on mount.
   useEffect(() => {
@@ -180,6 +214,87 @@ export function ChatInput({
     }
   }, [isLoading]);
 
+  useEffect(() => {
+    if (isLoading) {
+      suggestionsAbortRef.current?.abort();
+      suggestionsAbortRef.current = null;
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setIsFetchingSuggestions(false);
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    return () => {
+      if (suggestionsTimerRef.current !== null) {
+        clearTimeout(suggestionsTimerRef.current);
+      }
+      suggestionsAbortRef.current?.abort();
+    };
+  }, []);
+
+  // Keep ref in sync when the parent changes `value` (send, ArrowUp history, etc.).
+  useEffect(() => {
+    suggestionInputRef.current = value;
+    const trimmed = value.trim();
+    if (!suggestionsInputEligible(trimmed)) {
+      if (suggestionsTimerRef.current !== null) {
+        clearTimeout(suggestionsTimerRef.current);
+      }
+      suggestionsAbortRef.current?.abort();
+      suggestionsAbortRef.current = null;
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setIsFetchingSuggestions(false);
+    }
+  }, [value]);
+
+  function dismissSuggestions() {
+    setShowSuggestions(false);
+  }
+
+  function handleInputChange(next: string) {
+    onChangeValue(next);
+    suggestionInputRef.current = next;
+
+    if (suggestionsTimerRef.current !== null) {
+      clearTimeout(suggestionsTimerRef.current);
+    }
+
+    const trimmed = next.trim();
+    if (!suggestionsInputEligible(trimmed)) {
+      suggestionsAbortRef.current?.abort();
+      suggestionsAbortRef.current = null;
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setIsFetchingSuggestions(false);
+      return;
+    }
+
+    suggestionsTimerRef.current = setTimeout(async () => {
+      const current = suggestionInputRef.current.trim();
+      if (!suggestionsInputEligible(current)) return;
+
+      suggestionsAbortRef.current?.abort();
+      const ac = new AbortController();
+      suggestionsAbortRef.current = ac;
+
+      setIsFetchingSuggestions(true);
+      try {
+        const results = await getSmartSuggestions(current, 3, ac.signal);
+        if (ac.signal.aborted) return;
+        if (suggestionInputRef.current.trim() !== current) return;
+
+        setSuggestions(results);
+        setShowSuggestions(results.length > 0);
+      } finally {
+        if (!ac.signal.aborted && suggestionsAbortRef.current === ac) {
+          setIsFetchingSuggestions(false);
+        }
+      }
+    }, 150);
+  }
+
   const handleSubmit = (event?: FormEvent) => {
     if (event) {
       event.preventDefault();
@@ -191,6 +306,11 @@ export function ChatInput({
       window.setTimeout(() => setIsInputShaking(false), 450);
       return;
     }
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setIsFetchingSuggestions(false);
+    suggestionsAbortRef.current?.abort();
+    suggestionsAbortRef.current = null;
     const imagePayload = attachedImage
       ? { base64: attachedImage.base64, mediaType: attachedImage.mediaType }
       : undefined;
@@ -244,6 +364,12 @@ export function ChatInput({
         setSlashMenuHidden(true);
         return;
       }
+    }
+
+    if (showSuggestions && event.key === "Escape") {
+      event.preventDefault();
+      setShowSuggestions(false);
+      return;
     }
 
     if (event.key === "ArrowUp") {
@@ -568,6 +694,79 @@ export function ChatInput({
               </button>
             </div>
           )}
+
+          <AnimatePresence initial={false}>
+            {showSuggestions &&
+              suggestions.length > 0 &&
+              !isLoading &&
+              value.trim().length > 0 && (
+                <motion.div
+                  key="smart-suggestions"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="mb-2 overflow-hidden"
+                  aria-busy={isFetchingSuggestions}
+                >
+                  <div className="px-1 pb-2 pt-0.5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 dark:text-white/30">
+                        Related conversations
+                      </span>
+                      <button
+                        type="button"
+                        onClick={dismissSuggestions}
+                        className="px-1 text-xs text-muted-foreground/40 transition-colors hover:text-muted-foreground dark:text-white/20 dark:hover:text-white/50"
+                        aria-label="Dismiss suggestions"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestions.map((suggestion, index) => {
+                        const titleShort =
+                          suggestion.title.length > 25
+                            ? `${suggestion.title.slice(0, 25)}…`
+                            : suggestion.title;
+                        return (
+                          <motion.button
+                            key={suggestion.conversation_id}
+                            type="button"
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: index * 0.05 }}
+                            onClick={() => {
+                              onSelectSuggestion?.(suggestion.conversation_id);
+                              setShowSuggestions(false);
+                              setSuggestions([]);
+                              setIsFetchingSuggestions(false);
+                              if (!onSelectSuggestion) {
+                                window.location.href = `/?conversation=${suggestion.conversation_id}`;
+                              }
+                            }}
+                            className="flex max-w-[200px] cursor-pointer items-center gap-1.5 rounded-full border border-purple-500/20 bg-purple-500/[0.08] px-3 py-1 text-xs text-foreground/60 transition-all duration-150 hover:border-purple-500/40 hover:bg-purple-500/[0.15] hover:text-foreground dark:text-white/60 dark:hover:text-white"
+                            title={suggestion.content_summary}
+                          >
+                            <Clock
+                              size={10}
+                              className="shrink-0 text-muted-foreground/50 dark:text-white/30"
+                            />
+                            <span className="min-w-0 truncate">
+                              {titleShort}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-muted-foreground/40 dark:text-white/25">
+                              {getRelativeTime(suggestion.updated_at)}
+                            </span>
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+          </AnimatePresence>
+
           <div className="flex items-end gap-2">
             <button
               type="button"
@@ -632,7 +831,7 @@ export function ChatInput({
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(event) => onChangeValue(event.target.value)}
+            onChange={(event) => handleInputChange(event.target.value)}
             onKeyDown={handleKeyDown}
             onBlur={() =>
               // Short delay so onMouseDown on popup rows fires before blur hides the menu.

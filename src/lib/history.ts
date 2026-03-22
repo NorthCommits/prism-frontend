@@ -140,6 +140,56 @@ export async function searchConversations(
   return response.json();
 }
 
+export interface Suggestion {
+  conversation_id: string;
+  title: string;
+  similarity: number;
+  content_summary: string;
+  updated_at: string;
+}
+
+export async function getSmartSuggestions(
+  text: string,
+  limit: number = 3,
+  signal?: AbortSignal
+): Promise<Suggestion[]> {
+  const trimmed = text?.trim() ?? "";
+  if (!trimmed || trimmed.length < 4) return [];
+  try {
+    const headers = await getAuthHeader();
+    const response = await fetch(`${API_URL}/api/v1/suggestions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify({ text: trimmed, limit }),
+      signal,
+    });
+    if (!response.ok) return [];
+    const data = (await response.json()) as Suggestion[];
+    console.log("Smart suggestions:", data);
+    return data;
+  } catch (err: unknown) {
+    if (
+      err instanceof DOMException &&
+      err.name === "AbortError"
+    ) {
+      return [];
+    }
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "name" in err &&
+      (err as { name: string }).name === "AbortError"
+    ) {
+      return [];
+    }
+    console.error("Suggestions error:", err);
+    return [];
+  }
+}
+
 export async function updateConversationTitle(
   id: string,
   title: string
@@ -180,3 +230,26 @@ export async function deleteConversation(id: string): Promise<void> {
   }
 }
 
+export type EmbedAllConversationsResult = {
+  success?: boolean;
+  embedded: number;
+  failed?: number;
+  total: number;
+};
+
+export async function embedAllConversations(): Promise<EmbedAllConversationsResult | null> {
+  try {
+    const headers = await getAuthHeader();
+    const response = await fetch(`${API_URL}/api/v1/suggestions/embed-all`, {
+      method: "POST",
+      headers,
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as EmbedAllConversationsResult;
+    console.log("Bulk embed result:", data);
+    return data;
+  } catch (err) {
+    console.error("Bulk embed error:", err);
+    return null;
+  }
+}
