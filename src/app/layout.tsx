@@ -57,6 +57,7 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${jetBrainsMono.variable} antialiased`}
       suppressHydrationWarning
+      style={{ scrollBehavior: "auto" }}
     >
       <body className="min-h-screen bg-background text-foreground">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>

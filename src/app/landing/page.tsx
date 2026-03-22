@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { motion, useInView } from "motion/react";
-import { ReactLenis } from "lenis/react";
+import { ReactLenis, type LenisRef } from "lenis/react";
 import Link from "next/link";
 import { ArrowRight, ArrowUp, Check, ChevronDown, Play, X } from "lucide-react";
 
@@ -48,16 +48,25 @@ const MEMORY_NODES = [
 
 
 const STATS = [
-  { value: "10+", label: "Specialist AI Models" },
-  { value: "∞",   label: "Conversations Remembered" },
-  { value: "6",   label: "Premium Voice Options" },
-  { value: "1",   label: "Interface. All You Need." },
+  { value: "6+", label: "Prompt Templates" },
+  { value: "∞", label: "Conversations Searchable" },
+  { value: "25MB", label: "Per Project Storage" },
+  { value: "Free", label: "Always Free to Start" },
+];
+
+const STATS_ROW2 = [
+  { value: "6", label: "Templates" },
+  { value: "⌕", label: "Full Search" },
+  { value: "PWA", label: "Ready" },
+  { value: "∞", label: "Projects" },
 ];
 
 const MARQUEE_ITEMS = [
   "SMART ROUTING", "WEB SEARCH", "CODE EXECUTION", "IMAGE VISION",
   "VOICE I/O", "AGENT MODE", "PERSONAL MEMORY", "DATA ANALYSIS",
   "PROMPT TEMPLATES", "STREAMING RESPONSES",
+  "PROJECTS", "SLASH COMMANDS", "CONVERSATION SEARCH", "PWA SUPPORT",
+  "MESSAGE EDITING", "FILE UPLOAD", "CUSTOM INSTRUCTIONS",
 ];
 
 // ── CSS (inline, prefixed lp- to avoid conflicts) ──────────────────────────
@@ -114,6 +123,13 @@ const LANDING_CSS = `
     from { opacity:0; transform:scale(0.5); }
     to   { opacity:1; transform:scale(1); }
   }
+  @keyframes lp-phone-float-y {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  .lp-phone-float-1 { animation: lp-phone-float-y 4s ease-in-out infinite; }
+  .lp-phone-float-2 { animation: lp-phone-float-y 4.4s ease-in-out 0.15s infinite; }
+  .lp-phone-float-3 { animation: lp-phone-float-y 3.8s ease-in-out 0.3s infinite; }
   .lp-blob1   { animation: lp-blob1 18s ease-in-out infinite; }
   .lp-blob2   { animation: lp-blob2 23s ease-in-out infinite; }
   .lp-blob3   { animation: lp-blob3 16s ease-in-out infinite; }
@@ -725,7 +741,10 @@ function HeroSection() {
   }, []);
 
   return (
-    <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-20 pt-24">
+    <section
+      className="relative flex w-full min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-20 pt-24"
+      style={{ minHeight: "100vh" }}
+    >
       {/* Animated gradient blobs */}
       <div className="pointer-events-none absolute inset-0">
         <div className="lp-blob1 absolute -left-64 -top-64 h-[720px] w-[720px] rounded-full blur-[160px]" style={{ background: "rgba(139,92,246,0.22)" }} />
@@ -757,7 +776,7 @@ function HeroSection() {
           style={{ borderColor: "rgba(139,92,246,0.38)", background: "rgba(139,92,246,0.1)", color: "#a78bfa" }}
         >
           <span>✦</span>
-          Intelligent AI Routing
+          Now with Projects, Search &amp; More
         </motion.div>
 
         {/* Headline */}
@@ -788,10 +807,11 @@ function HeroSection() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.5 }}
-          className="mb-10 max-w-[540px] text-[17px] leading-[1.8] text-white/50"
+          className="mb-10 max-w-[560px] text-[17px] leading-[1.8] text-white/50"
         >
-          Prism is an AI copilot that intelligently routes every conversation to the
-          perfect specialist model. Web search. Code execution. Vision. Voice. Memory.
+          Prism is your intelligent AI copilot that learns who you are, organizes your
+          work into projects, and routes every message to the perfect model. The more
+          you use it, the smarter it gets.
         </motion.p>
 
         {/* CTAs */}
@@ -839,7 +859,7 @@ function HeroSection() {
 function LiveDemoSection() {
   const sectionRef = useRef<HTMLDivElement>(null);
   const inView = useInView(sectionRef as React.RefObject<HTMLElement>, { once: true, margin: "-80px 0px" });
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
 
   /* Accumulate streaming tokens outside React state to avoid stale closures */
   const streamingRef = useRef("");
@@ -863,9 +883,11 @@ function LiveDemoSection() {
   const API_URL =
     process.env.NEXT_PUBLIC_API_URL || "https://prism-backend-sjhg.onrender.com";
 
-  /* Auto-scroll to bottom whenever messages or streaming content updates */
+  /* Keep newest messages in view inside the demo panel only (avoid scrolling the page) */
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [demoMessages, streamingContent]);
 
   const sendMessage = async (text?: string) => {
@@ -1061,7 +1083,11 @@ function LiveDemoSection() {
           </div>
 
           {/* Scrollable messages area */}
-          <div className="demo-scroll overflow-y-auto p-5" style={{ height: "320px" }}>
+          <div
+            ref={messagesScrollRef}
+            className="demo-scroll overflow-y-auto p-5"
+            style={{ height: "320px" }}
+          >
             {demoMessages.map((msg, i) => (
               <div
                 key={i}
@@ -1133,9 +1159,6 @@ function LiveDemoSection() {
                 </div>
               </div>
             )}
-
-            {/* Scroll anchor */}
-            <div ref={messagesEndRef} />
           </div>
 
           {/* Input row OR rate-limit CTA */}
@@ -1294,6 +1317,716 @@ function AgentSection() {
         <FadeIn delay={0.38} className="w-full">
           <AgentDemo />
         </FadeIn>
+      </div>
+    </section>
+  );
+}
+
+function ProjectsWorkspaceSection() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, {
+    once: true,
+    margin: "-80px 0px",
+    amount: 0.15,
+  });
+
+  const fileRows = [
+    { icon: "📄", name: "guidelines.pdf", size: "2.1MB", delay: 0.35 },
+    { icon: "📊", name: "data.csv", size: "0.8MB", delay: 0.5 },
+    { icon: "📝", name: "notes.txt", size: "0.1MB", delay: 0.65 },
+  ];
+
+  return (
+    <section
+      className="relative overflow-hidden border-t border-white/[0.05]"
+      style={{ minHeight: "100vh" }}
+    >
+      <div
+        className="pointer-events-none absolute h-[560px] w-[560px] rounded-full blur-[150px]"
+        style={{ background: "rgba(6,182,212,0.14)", top: "-100px", right: "-120px" }}
+      />
+      <div
+        ref={ref}
+        className="relative mx-auto flex min-h-screen max-w-7xl flex-col gap-16 px-8 py-28 lg:flex-row lg:items-center lg:gap-20"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -32 }}
+          animate={inView ? { opacity: 1, x: 0 } : {}}
+          transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+          className="flex flex-1 flex-col justify-center"
+        >
+          <p
+            className="mb-5 text-[11px] font-bold uppercase text-cyan-400"
+            style={{ letterSpacing: "0.2em" }}
+          >
+            WORKSPACES
+          </p>
+          <h2
+            className="mb-5 font-black leading-[1.08] tracking-[-0.04em] text-white"
+            style={{ fontSize: "clamp(30px, 3.2vw, 46px)" }}
+          >
+            <WordReveal text="Organize your work." />
+            <br />
+            <WordReveal text="Like never before." baseDelay={0.22} />
+          </h2>
+          <FadeIn delay={0.12} y={14} className="mb-2 max-w-[440px] text-[15px] leading-[1.85] text-white/45">
+            Create projects for different areas of your work.
+          </FadeIn>
+          <FadeIn delay={0.2} y={14} className="mb-2 max-w-[440px] text-[15px] leading-[1.85] text-white/45">
+            Upload reference files — PDFs, code, documents.
+          </FadeIn>
+          <FadeIn delay={0.28} y={14} className="mb-2 max-w-[440px] text-[15px] leading-[1.85] text-white/45">
+            Set custom instructions per project.
+          </FadeIn>
+          <FadeIn delay={0.36} y={14} className="mb-7 max-w-[440px] text-[15px] leading-[1.85] text-white/45">
+            Every conversation stays in context.
+          </FadeIn>
+          {[
+            "Upload PDFs, DOCX, CSV, code files",
+            "Custom instructions per project",
+            "Link conversations to projects",
+            "5MB per file, 25MB per project",
+            "File content auto-injected into chat",
+          ].map((b, i) => (
+            <FadeIn key={b} delay={0.42 + i * 0.07} y={12} className="mb-3 flex items-start gap-3">
+              <span
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                style={{
+                  background: "rgba(6,182,212,0.15)",
+                  color: "#22d3ee",
+                  border: "1px solid rgba(6,182,212,0.35)",
+                }}
+              >
+                ✦
+              </span>
+              <span className="text-sm leading-relaxed text-white/55">{b}</span>
+            </FadeIn>
+          ))}
+        </motion.div>
+
+        <div className="flex flex-1 flex-col items-center justify-center gap-6">
+          <motion.div
+            initial={{ opacity: 0, x: 56 }}
+            animate={inView ? { opacity: 1, x: 0 } : {}}
+            transition={{ duration: 0.85, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+            className="lp-glow w-[300px] max-w-full rounded-2xl border border-white/[0.08] p-4 shadow-[0_0_40px_rgba(139,92,246,0.25)]"
+            style={{ background: "rgba(12,12,18,0.85)", backdropFilter: "blur(16px)" }}
+          >
+            <div
+              className="mb-4 w-full rounded-full bg-gradient-to-r from-[#7c3aed] to-[#06b6d4]"
+              style={{ height: "4px" }}
+            />
+            <p className="mb-1 text-[15px] font-semibold text-white">📁 Pharma Content Q1</p>
+            <p className="mb-4 text-[12px] text-white/40">Research and documentation</p>
+            <div className="space-y-2 border-t border-white/[0.06] pt-3">
+              {fileRows.map((f) => (
+                <motion.div
+                  key={f.name}
+                  initial={{ opacity: 0, x: 12 }}
+                  animate={inView ? { opacity: 1, x: 0 } : {}}
+                  transition={{ duration: 0.45, delay: f.delay, ease: [0.16, 1, 0.3, 1] }}
+                  className="flex items-center justify-between text-[12px] text-white/70"
+                >
+                  <span>
+                    {f.icon} {f.name}
+                  </span>
+                  <span className="text-white/35">{f.size}</span>
+                </motion.div>
+              ))}
+            </div>
+            <p className="mt-4 border-t border-white/[0.06] pt-3 text-[11px] text-white/35">
+              3 files · 3.0 MB used
+            </p>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.65, delay: 0.55, ease: [0.16, 1, 0.3, 1] }}
+            className="w-[300px] max-w-full rounded-2xl border border-white/[0.08] p-4"
+            style={{ background: "rgba(255,255,255,0.04)" }}
+          >
+            <div className="mb-2 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">
+                PRISM
+              </span>
+            </div>
+            <p className="text-[13px] leading-relaxed text-white/65">
+              Based on your uploaded guidelines.pdf, the content should follow FDA format...
+            </p>
+          </motion.div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const SLASH_DEMO_ROWS = [
+  { cmd: "/code-review", title: "Code Review", sub: "Senior engineer reviews", icon: "🔍" },
+  { cmd: "/explain", title: "Explain This", sub: "Break down any concept", icon: "💡" },
+  { cmd: "/write-tests", title: "Write Tests", sub: "Generate test cases", icon: "✅" },
+  { cmd: "/summarize", title: "Summarize", sub: "Condense any content", icon: "📝" },
+];
+
+function SlashCommandsFeatureSection() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, {
+    once: true,
+    margin: "-80px 0px",
+    amount: 0.15,
+  });
+  const [loopMs, setLoopMs] = useState(0);
+  const slashRafRef = useRef(0);
+
+  useEffect(() => {
+    if (!inView) return;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      setLoopMs((now - t0) % 4000);
+      slashRafRef.current = requestAnimationFrame(tick);
+    };
+    slashRafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(slashRafRef.current);
+  }, [inView]);
+
+  const showPopup = loopMs >= 300;
+  const typedSlash = "/";
+  const explainLen =
+    loopMs < 2000 ? 0 : Math.min(7, Math.floor((loopMs - 2000) / 45));
+  const typedExplain = "explain".slice(0, explainLen);
+  const filterMode = loopMs >= 2500;
+  const rowsSource = filterMode ? SLASH_DEMO_ROWS.slice(0, 2) : SLASH_DEMO_ROWS;
+  const menuHighlightIdx =
+    filterMode ? 0 : loopMs >= 1500 && loopMs < 2000 ? 1 : -1;
+
+  return (
+    <section
+      className="relative overflow-hidden border-t border-white/[0.05]"
+      style={{ minHeight: "100vh" }}
+    >
+      <div
+        className="pointer-events-none absolute h-[520px] w-[520px] rounded-full blur-[145px]"
+        style={{ background: "rgba(139,92,246,0.16)", top: "-80px", left: "-100px" }}
+      />
+      <div
+        ref={ref}
+        className="relative mx-auto flex min-h-screen max-w-7xl flex-col gap-16 px-8 py-28 lg:flex-row lg:items-center lg:gap-20"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -40 }}
+          animate={inView ? { opacity: 1, x: 0 } : {}}
+          transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+          className="flex flex-1 flex-col items-center justify-center lg:order-first"
+        >
+          <div className="relative w-full max-w-[320px]">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={inView && showPopup ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
+              transition={{ duration: 0.35 }}
+              className="mb-3 overflow-hidden rounded-xl border border-white/[0.1] shadow-xl"
+              style={{ background: "rgba(10,10,14,0.95)", backdropFilter: "blur(12px)" }}
+            >
+              <p className="border-b border-white/[0.08] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-white/45">
+                PROMPT TEMPLATES
+              </p>
+              <div className="max-h-[220px] overflow-hidden">
+                {rowsSource.map((row, i) => {
+                  const origIdx = SLASH_DEMO_ROWS.findIndex((r) => r.cmd === row.cmd);
+                  const staggerAt = 500 + origIdx * 100;
+                  const rowVisible =
+                    showPopup &&
+                    (filterMode ? loopMs >= 2500 + i * 90 : loopMs >= staggerAt);
+                  return (
+                  <motion.div
+                    key={`${filterMode ? "f" : "a"}-${row.cmd}`}
+                    initial={{ opacity: 0 }}
+                    animate={inView && rowVisible ? { opacity: 1 } : { opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="border-b border-white/[0.06] px-3 py-2.5 last:border-0"
+                    style={{
+                      background:
+                        menuHighlightIdx === i
+                          ? "rgba(139,92,246,0.12)"
+                          : "transparent",
+                    }}
+                  >
+                    <div className="flex gap-2">
+                      <span className="text-sm">{row.icon}</span>
+                      <div>
+                        <p className="text-[12px] font-semibold text-white">
+                          <span className="text-violet-300">{row.cmd}</span>{" "}
+                          {row.title}
+                        </p>
+                        <p className="text-[10px] text-white/40">{row.sub}</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                  );
+                })}
+              </div>
+            </motion.div>
+            <div
+              className="rounded-xl border border-white/[0.1] px-3 py-2.5 text-[14px] text-white/80"
+              style={{ background: "rgba(255,255,255,0.04)" }}
+            >
+              {typedSlash}
+              <span className="text-violet-300">{typedExplain}</span>
+              <span className="lp-cursor ml-0.5 inline-block h-4 w-px bg-violet-400 align-middle" />
+            </div>
+          </div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, x: 32 }}
+          animate={inView ? { opacity: 1, x: 0 } : {}}
+          transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+          className="flex flex-1 flex-col justify-center lg:order-last"
+        >
+          <SectionLabel text="TEMPLATES" color="text-violet-400" />
+          <h2
+            className="mb-5 font-black leading-[1.08] tracking-[-0.04em] text-white"
+            style={{ fontSize: "clamp(30px, 3.2vw, 46px)" }}
+          >
+            <WordReveal text="Expert modes." />
+            <br />
+            <WordReveal text="One keystroke." baseDelay={0.2} />
+          </h2>
+          <FadeIn delay={0.1} y={14} className="mb-7 max-w-[440px] text-[15px] leading-[1.85] text-white/45">
+            Type / and instantly access expert AI personas. A senior engineer. A
+            technical writer. A QA specialist. A brainstorming partner. Each with a
+            perfectly crafted system prompt.
+          </FadeIn>
+          {[
+            "/code-review — Senior engineer review",
+            "/explain — Break down any concept",
+            "/write-tests — Generate test cases",
+            "/summarize — Condense any content",
+            "/brainstorm — Creative ideation",
+            "/document — Write documentation",
+          ].map((b, i) => (
+            <FadeIn key={b} delay={0.16 + i * 0.06} y={10} className="mb-2.5 flex items-start gap-3">
+              <span
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                style={{
+                  background: "rgba(139,92,246,0.18)",
+                  color: "#a78bfa",
+                  border: "1px solid rgba(139,92,246,0.4)",
+                }}
+              >
+                ✦
+              </span>
+              <span className="text-sm leading-relaxed text-white/55">{b}</span>
+            </FadeIn>
+          ))}
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+const LANDING_SEARCH_SCENARIOS = [
+  {
+    query: "pandas dataframe",
+    highlight: "pandas",
+    results: [
+      {
+        title: "Python Data Analysis",
+        snippet:
+          "...using pandas DataFrame.groupby() to aggregate the sales data by...",
+        age: "3 days ago",
+        badge: "content" as const,
+      },
+      {
+        title: "CSV File Processing",
+        snippet: "...import pandas as pd\ndf = pd.read_csv('data.csv')...",
+        age: "1 week ago",
+        badge: "content" as const,
+      },
+      {
+        title: "Data Visualization",
+        snippet: "...pandas and matplotlib to create the bar chart you requested...",
+        age: "2 weeks ago",
+        badge: "content" as const,
+      },
+    ],
+  },
+  {
+    query: "FastAPI routes",
+    highlight: "FastAPI",
+    results: [
+      {
+        title: "API Design Session",
+        snippet: "...define FastAPI routes with dependency injection for auth...",
+        age: "2 days ago",
+        badge: "title" as const,
+      },
+      {
+        title: "Backend Scaffold",
+        snippet: "...FastAPI router includes CRUD for users and projects...",
+        age: "5 days ago",
+        badge: "content" as const,
+      },
+      {
+        title: "OpenAPI Docs",
+        snippet: "...auto-generated FastAPI OpenAPI schema for clients...",
+        age: "1 week ago",
+        badge: "content" as const,
+      },
+    ],
+  },
+];
+
+function highlightMatchLanding(text: string, q: string) {
+  if (!q.trim()) return text;
+  const lower = text.toLowerCase();
+  const qi = q.toLowerCase();
+  const idx = lower.indexOf(qi);
+  if (idx < 0) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark
+        className="rounded px-0.5"
+        style={{ background: "rgba(250,204,21,0.28)", color: "#fef9c3" }}
+      >
+        {text.slice(idx, idx + q.length)}
+      </mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
+}
+
+function ConversationSearchLandingSection() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, {
+    once: true,
+    margin: "-80px 0px",
+    amount: 0.15,
+  });
+  const [scenarioIdx, setScenarioIdx] = useState(0);
+  const [charIdx, setCharIdx] = useState(0);
+  const [visibleResultCount, setVisibleResultCount] = useState(0);
+
+  const scenario = LANDING_SEARCH_SCENARIOS[scenarioIdx];
+  const fullQ = scenario.query;
+
+  useEffect(() => {
+    if (!inView) return;
+    let cancelled = false;
+    const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    (async () => {
+      let idx = 0;
+      while (!cancelled) {
+        const scen = LANDING_SEARCH_SCENARIOS[idx];
+        setScenarioIdx(idx);
+        setVisibleResultCount(0);
+        setCharIdx(0);
+        await wait(120);
+        if (cancelled) return;
+        for (let i = 0; i <= scen.query.length; i++) {
+          if (cancelled) return;
+          setCharIdx(i);
+          await wait(42);
+        }
+        await wait(220);
+        if (cancelled) return;
+        for (let r = 0; r < scen.results.length; r++) {
+          if (cancelled) return;
+          setVisibleResultCount(r + 1);
+          await wait(130);
+        }
+        await wait(2000);
+        idx = (idx + 1) % LANDING_SEARCH_SCENARIOS.length;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inView]);
+
+  const qDisplay = fullQ.slice(0, charIdx);
+
+  return (
+    <section
+      className="relative overflow-hidden border-t border-white/[0.05]"
+      style={{ minHeight: "80vh", background: "#000" }}
+    >
+      <div className="pointer-events-none absolute inset-0">
+        <div
+          className="absolute left-1/4 top-1/2 h-[420px] w-[420px] -translate-y-1/2 rounded-full blur-[130px]"
+          style={{ background: "rgba(16,185,129,0.12)" }}
+        />
+        <div
+          className="absolute right-1/4 top-1/3 h-[380px] w-[380px] rounded-full blur-[120px]"
+          style={{ background: "rgba(6,182,212,0.1)" }}
+        />
+      </div>
+      <div
+        ref={ref}
+        className="relative mx-auto flex min-h-[80vh] max-w-3xl flex-col items-center justify-center px-6 py-24 text-center"
+      >
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          className="mb-4 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-400"
+        >
+          SEARCH
+        </motion.p>
+        <h2
+          className="mb-4 font-black leading-[0.95] tracking-[-0.04em] text-white"
+          style={{ fontSize: "clamp(36px, 5vw, 56px)" }}
+        >
+          <WordReveal text="Find anything." />
+          <br />
+          <WordReveal text="Instantly." baseDelay={0.18} />
+        </h2>
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ delay: 0.2 }}
+          className="mb-12 max-w-lg text-[15px] leading-[1.82] text-white/45"
+        >
+          Search across every conversation you&apos;ve ever had. By title, by
+          content, by topic. Results in milliseconds.
+        </motion.p>
+
+        <div className="w-full max-w-xl text-left">
+          <div
+            className="mb-4 flex items-center gap-2 rounded-xl border border-white/[0.1] px-4 py-3"
+            style={{ background: "rgba(255,255,255,0.04)" }}
+          >
+            <span className="text-white/35">🔍</span>
+            <span className="text-[14px] text-white/75">
+              {qDisplay}
+              <span className="lp-cursor ml-0.5 inline-block h-4 w-px bg-emerald-400/80 align-middle" />
+            </span>
+          </div>
+          <div className="space-y-3">
+            {scenario.results.map((r, i) => (
+              <motion.div
+                key={`${scenarioIdx}-${r.title}`}
+                initial={{ opacity: 0, y: 20 }}
+                animate={
+                  inView && charIdx >= fullQ.length && visibleResultCount > i
+                    ? { opacity: 1, y: 0 }
+                    : { opacity: 0, y: 16 }
+                }
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className="relative overflow-hidden rounded-xl border border-white/[0.08] p-4"
+                style={{
+                  background: "rgba(12,12,16,0.88)",
+                  backdropFilter: "blur(12px)",
+                  borderLeftWidth: "3px",
+                  borderLeftColor:
+                    r.badge === "title" ? "rgba(139,92,246,0.85)" : "rgba(6,182,212,0.75)",
+                }}
+              >
+                <div className="mb-1 flex items-start justify-between gap-2">
+                  <span className="text-[10px] font-bold text-cyan-500/90">[CODE]</span>
+                  <span
+                    className="rounded-full px-2 py-0.5 text-[9px] font-medium uppercase"
+                    style={{
+                      background:
+                        r.badge === "title"
+                          ? "rgba(139,92,246,0.2)"
+                          : "rgba(6,182,212,0.15)",
+                      color: r.badge === "title" ? "#c4b5fd" : "#67e8f9",
+                    }}
+                  >
+                    {r.badge}
+                  </span>
+                </div>
+                <p className="mb-2 text-[14px] font-bold text-white">
+                  {highlightMatchLanding(r.title, scenario.highlight)}
+                </p>
+                <p className="line-clamp-2 whitespace-pre-line text-[12px] leading-relaxed text-white/45">
+                  &ldquo;{highlightMatchLanding(r.snippet, scenario.highlight)}&rdquo;
+                </p>
+                <p className="mt-2 text-right text-[10px] text-white/30">{r.age}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PWALandingSection() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, {
+    once: true,
+    margin: "-80px 0px",
+    amount: 0.15,
+  });
+
+  const phoneShell =
+    "rounded-[2rem] border border-white/[0.12] bg-zinc-950 p-2 shadow-2xl";
+  const screen = "rounded-[1.5rem] overflow-hidden bg-[#0a0a0f]";
+
+  return (
+    <section
+      className="relative overflow-hidden border-t border-white/[0.05]"
+      style={{
+        minHeight: "60vh",
+        background: "linear-gradient(180deg, #050008 0%, #0c0618 45%, #000 100%)",
+      }}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-40"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 50% at 50% 30%, rgba(88,28,135,0.35), transparent)",
+        }}
+      />
+      <div
+        ref={ref}
+        className="relative mx-auto flex min-h-[60vh] max-w-6xl flex-col items-center justify-center px-6 py-20 text-center"
+      >
+        <motion.p
+          initial={{ opacity: 0, y: 8 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em] text-violet-400"
+        >
+          EVERYWHERE
+        </motion.p>
+        <h2
+          className="mb-4 font-black leading-[0.95] tracking-[-0.04em] text-white"
+          style={{ fontSize: "clamp(32px, 4.5vw, 48px)" }}
+        >
+          <WordReveal text="Your AI. On every device." />
+        </h2>
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ delay: 0.15 }}
+          className="mb-14 max-w-md text-[15px] leading-[1.8] text-white/45"
+        >
+          Install Prism on your phone or desktop. Works offline. No app store
+          needed. Add to Home Screen in one tap.
+        </motion.p>
+
+        <div className="mb-12 flex w-full flex-wrap items-end justify-center gap-6 md:gap-10">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.65, delay: 0.1 }}
+            className="flex flex-col items-center"
+            style={{ transform: "rotate(-8deg)" }}
+          >
+            <div className={`lp-phone-float-1 ${phoneShell}`} style={{ width: "140px" }}>
+            <div className={`${screen} relative h-[220px] p-3`}>
+              <div
+                className="pointer-events-none absolute inset-0 opacity-[0.07]"
+                style={{
+                  background:
+                    "linear-gradient(125deg, rgba(255,255,255,0.5) 0%, transparent 42%)",
+                }}
+              />
+              <div className="relative mb-2 flex gap-1">
+                <div className="h-2 w-2 rounded-full bg-white/20" />
+                <div className="h-2 w-2 rounded-full bg-white/20" />
+              </div>
+              <div className="relative space-y-2">
+                <div className="ml-auto max-w-[85%] rounded-2xl bg-gradient-to-r from-violet-600 to-cyan-600 px-2 py-1.5 text-[9px] text-white">
+                  Quick question…
+                </div>
+                <div className="max-w-[90%] rounded-2xl border border-white/10 bg-white/[0.06] px-2 py-1.5 text-[9px] text-white/60">
+                  Here&apos;s a concise answer…
+                </div>
+              </div>
+            </div>
+            <p className="mt-2 text-center text-[9px] text-white/40">Installed</p>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.65, delay: 0 }}
+            className={`lp-phone-float-2 flex flex-col ${phoneShell}`}
+            style={{ width: "168px" }}
+          >
+            <div className={`${screen} relative h-[260px] p-3`}>
+              <div
+                className="pointer-events-none absolute inset-0 opacity-[0.07]"
+                style={{
+                  background:
+                    "linear-gradient(125deg, rgba(255,255,255,0.45) 0%, transparent 40%)",
+                }}
+              />
+              <p className="relative mb-2 text-center text-[10px] font-semibold text-white/80">
+                Add to Home Screen
+              </p>
+              <div className="relative mx-auto mb-3 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] p-2">
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-black text-white"
+                  style={{ background: "linear-gradient(135deg, #8b5cf6, #06b6d4)" }}
+                >
+                  P
+                </div>
+                <div className="text-left text-[9px] text-white/50">
+                  <p className="font-medium text-white/80">Prism</p>
+                  <p>prism-app…</p>
+                </div>
+              </div>
+              <div className="relative flex justify-center gap-2">
+                <span className="rounded-lg bg-violet-600 px-3 py-1 text-[9px] text-white">
+                  Add
+                </span>
+                <span className="rounded-lg border border-white/15 px-3 py-1 text-[9px] text-white/50">
+                  Cancel
+                </span>
+              </div>
+            </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={inView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.65, delay: 0.2 }}
+            className="flex flex-col items-center"
+            style={{ transform: "rotate(8deg)" }}
+          >
+            <div className={`lp-phone-float-3 ${phoneShell}`} style={{ width: "140px" }}>
+            <div className={`${screen} relative flex h-[220px] flex-col items-center justify-center gap-3 p-3`}>
+              <div
+                className="pointer-events-none absolute inset-0 opacity-[0.07]"
+                style={{
+                  background:
+                    "linear-gradient(125deg, rgba(255,255,255,0.45) 0%, transparent 40%)",
+                }}
+              />
+              <div
+                className="relative flex h-12 w-12 items-center justify-center rounded-2xl text-lg font-black text-white shadow-lg"
+                style={{ background: "linear-gradient(135deg, #8b5cf6, #06b6d4)" }}
+              >
+                P
+              </div>
+              <p className="relative text-[10px] text-white/50">Prism</p>
+            </div>
+            </div>
+          </motion.div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-center gap-4 md:gap-8">
+          {[
+            { icon: "📱", text: "Works on iOS & Android" },
+            { icon: "💻", text: "Desktop PWA support" },
+            { icon: "⚡", text: "Offline capable" },
+          ].map((pill, i) => (
+            <FadeIn key={pill.text} delay={0.25 + i * 0.08} y={8}>
+              <span
+                className="inline-flex items-center gap-2 rounded-full border border-white/[0.1] px-4 py-2 text-[12px] text-white/55"
+                style={{ background: "rgba(255,255,255,0.03)" }}
+              >
+                {pill.icon} {pill.text}
+              </span>
+            </FadeIn>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -1584,9 +2317,13 @@ function ComparisonSection() {
     { kind: "row", feature: "Custom Instructions",            prism: "check", chatgpt: "check",   claude: "check",   copilot: "check"   },
     { kind: "row", feature: "Prompt Templates",               prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "check"   },
     { kind: "row", feature: "Multi-Step Agent Mode",          prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
+    { kind: "row", feature: "Projects & Workspaces",          prism: "check", chatgpt: "cross",   claude: "paid",    copilot: "cross"   },
+    { kind: "row", feature: "Slash Command Templates",        prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "check"   },
+    { kind: "row", feature: "Conversation Search",            prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
+    { kind: "row", feature: "PWA / Install Support",          prism: "check", chatgpt: "check",   claude: "check",   copilot: "check"   },
+    { kind: "row", feature: "File Upload to Projects",        prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "paid"    },
     { kind: "row", feature: "File Upload & Analysis",         prism: "check", chatgpt: "paid",    claude: "paid",    copilot: "check"   },
     { kind: "row", feature: "Data Visualization (Charts)",    prism: "check", chatgpt: "paid",    claude: "cross",   copilot: "cross"   },
-    { kind: "row", feature: "Conversation Search",            prism: "check", chatgpt: "cross",   claude: "cross",   copilot: "cross"   },
     { kind: "label", text: "Platform & Ecosystem" },
     { kind: "row", feature: "Mobile App",                     prism: "cross", chatgpt: "check",   claude: "check",   copilot: "check"   },
     { kind: "row", feature: "API Access",                     prism: "cross", chatgpt: "paid",    claude: "paid",    copilot: "paid"    },
@@ -1865,10 +2602,15 @@ function StatsSection() {
         background: "linear-gradient(135deg, rgba(139,92,246,0.05) 0%, rgba(6,182,212,0.03) 50%, rgba(236,72,153,0.04) 100%)",
       }}
     >
-      <div className="mx-auto max-w-4xl px-6">
+      <div className="mx-auto max-w-5xl px-6 py-2">
         <div className="flex flex-wrap items-center justify-center divide-y divide-white/[0.05] md:divide-x md:divide-y-0">
           {STATS.map((s, i) => (
             <StatItem key={s.label} value={s.value} label={s.label} index={i} />
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-center divide-y divide-white/[0.05] border-t border-white/[0.05] md:divide-x md:divide-y-0">
+          {STATS_ROW2.map((s, i) => (
+            <StatItem key={`r2-${s.label}`} value={s.value} label={s.label} index={i} />
           ))}
         </div>
       </div>
@@ -1939,7 +2681,7 @@ function FinalCTASection() {
           style={{ borderColor: "rgba(139,92,246,0.38)", background: "rgba(139,92,246,0.1)", color: "#a78bfa" }}
         >
           <span>✦</span>
-          Free. Open. Powerful.
+          Projects. Search. Memory. Free.
         </div>
 
         <h2
@@ -1962,7 +2704,8 @@ function FinalCTASection() {
 
         <p className="mb-12 max-w-md text-lg text-white/45">
           Join and experience the future of human-AI collaboration.
-          No credit card required.
+          <br />
+          No credit card required. Install as app. Use everywhere.
         </p>
 
         <Link
@@ -2010,8 +2753,27 @@ function Footer() {
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
+  const lenisRef = useRef<LenisRef>(null);
+
+  useEffect(() => {
+    window.history.scrollRestoration = "manual";
+    const snapToTop = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      lenisRef.current?.lenis?.scrollTo(0, { immediate: true });
+    };
+    snapToTop();
+    const t1 = window.setTimeout(snapToTop, 0);
+    const t2 = window.setTimeout(snapToTop, 32);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, []);
+
   return (
-    <ReactLenis root>
+    <ReactLenis root ref={lenisRef}>
       <style>{LANDING_CSS}</style>
 
       <div className="min-h-screen overflow-x-hidden bg-black text-white selection:bg-violet-500/30">
@@ -2071,6 +2833,11 @@ export default function LandingPage() {
             visual={<CodeTerminal />}
             blobColor="rgba(16,185,129,0.15)"
           />
+
+          <ProjectsWorkspaceSection />
+          <SlashCommandsFeatureSection />
+          <ConversationSearchLandingSection />
+          <PWALandingSection />
 
           <FeatureSection
             side="right"
