@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { FolderOpen, MessageSquare, Search, User } from "lucide-react";
 import { motion } from "motion/react";
+import { Haptics } from "@/lib/haptics";
 
 type BottomNavProps = {
   keyboardOpen: boolean;
@@ -40,6 +41,7 @@ export function BottomNav({ keyboardOpen }: BottomNavProps) {
       <motion.div className="flex min-w-0 flex-1" whileTap={{ scale: 0.9 }}>
         <Link
           href="/"
+          onClick={() => Haptics.tabSwitch()}
           className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5"
           aria-current={chatActive ? "page" : undefined}
         >
@@ -61,6 +63,7 @@ export function BottomNav({ keyboardOpen }: BottomNavProps) {
       <motion.div className="flex min-w-0 flex-1" whileTap={{ scale: 0.9 }}>
         <Link
           href="/projects"
+          onClick={() => Haptics.tabSwitch()}
           className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5"
           aria-current={projectsActive ? "page" : undefined}
         >
@@ -82,7 +85,10 @@ export function BottomNav({ keyboardOpen }: BottomNavProps) {
       <motion.button
         type="button"
         className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5"
-        onClick={() => router.push("/?search=true")}
+        onClick={() => {
+          Haptics.tabSwitch();
+          router.push("/?search=true");
+        }}
         whileTap={{ scale: 0.9 }}
       >
         <Search className="size-5 text-white/40" strokeWidth={2} />
@@ -94,6 +100,7 @@ export function BottomNav({ keyboardOpen }: BottomNavProps) {
       <motion.div className="flex min-w-0 flex-1" whileTap={{ scale: 0.9 }}>
         <Link
           href="/profile"
+          onClick={() => Haptics.tabSwitch()}
           className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5"
           aria-current={profileActive ? "page" : undefined}
         >

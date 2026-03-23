@@ -7,3 +7,6 @@ export function createClient() {
   );
 }
 
+// Shared browser client instance for components that need stable session state.
+export const supabase = createClient();
+

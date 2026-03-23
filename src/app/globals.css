@@ -48,6 +48,20 @@
 }
 
 :root {
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.4);
+  --text-disabled: rgba(255, 255, 255, 0.2);
+  --accent-purple: #a78bfa;
+  --accent-cyan: #67e8f9;
+  --accent-green: #4ade80;
+  --accent-red: #f87171;
+  --accent-yellow: #fbbf24;
+  --accent-pink: #f472b6;
+  --bg-card: rgba(15, 15, 20, 0.8);
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-accent: rgba(139, 92, 246, 0.3);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -276,6 +290,24 @@ html {
   100% {
     transform: scale(1);
   }
+}
+
+@keyframes prism-bounce-hint {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.prism-scroll-hint-bounce {
+  animation: prism-bounce-hint 1s ease infinite;
+}
+
+.chat-message-content {
+  transition: font-size 0.2s ease, line-height 0.2s ease;
 }
 
 @keyframes prism-splash-shimmer {

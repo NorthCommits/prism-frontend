@@ -5,6 +5,7 @@ import { Check, FolderOpen, Loader2, Plus } from "lucide-react";
 import Link from "next/link";
 import { getProjects } from "@/lib/projects";
 import type { Project } from "@/lib/projects";
+import { Haptics } from "@/lib/haptics";
 
 interface ProjectPickerProps {
   activeProjectId: string | null;
@@ -59,7 +60,11 @@ export function ProjectPicker({ activeProjectId, onSelect, onClose }: ProjectPic
       {/* Currently active project unlink row */}
       {activeProjectId && (
         <button
-          onClick={() => { onSelect(null); onClose(); }}
+          onClick={() => {
+            Haptics.press();
+            onSelect(null);
+            onClose();
+          }}
           className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
         >
@@ -91,7 +96,11 @@ export function ProjectPicker({ activeProjectId, onSelect, onClose }: ProjectPic
             return (
               <button
                 key={p.id}
-                onClick={() => { onSelect(isActive ? null : p); onClose(); }}
+                onClick={() => {
+                  Haptics.press();
+                  onSelect(isActive ? null : p);
+                  onClose();
+                }}
                 className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/[0.05]"
               >
                 <span

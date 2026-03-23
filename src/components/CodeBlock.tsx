@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useCallback,
   useMemo,
   useState,
@@ -10,18 +11,13 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   Check,
   Copy,
-  Loader2,
   Play,
   WrapText,
-  X,
-  XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-
-import { createClient } from "@/lib/supabase";
-import type { HistoryMessage } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -36,6 +32,8 @@ const RUNNABLE_LANGUAGES = new Set([
   "js",
   "ts",
   "py",
+  "sh",
+  "shell",
 ]);
 
 const LINE_NUMBER_STYLE: CSSProperties = {
@@ -49,6 +47,7 @@ type CodeBlockProps = {
   code: string;
   language: string;
   conversationId?: string | null;
+  isStreaming?: boolean;
 };
 
 function spawnRipple(
@@ -103,37 +102,39 @@ function isRunnableLanguage(lang: string): boolean {
   return RUNNABLE_LANGUAGES.has(lang.toLowerCase());
 }
 
-async function postRunCodeMessage(message: string): Promise<
-  | { ok: true; text: string }
-  | { ok: false; error: string }
-> {
-  const supabase = createClient();
+type SandboxExecuteResponse = {
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+  timed_out?: boolean;
+};
+
+async function executeSandboxCode(code: string, language: string): Promise<{
+  output: string;
+  type: "success" | "error";
+}> {
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (session?.access_token) {
-    headers.Authorization = `Bearer ${session.access_token}`;
+  if (!session?.access_token) {
+    return { output: "Please log in to run code", type: "error" };
   }
 
-  const body: Record<string, unknown> = {
-    message,
-    model_id: "auto",
-    conversation_history: [] as HistoryMessage[],
-    user_id: session?.user?.id,
-  };
-
-  const response = await fetch(`${API_URL}/api/v1/chat`, {
+  const response = await fetch(`${API_URL}/api/v1/sandbox/execute`, {
     method: "POST",
-    headers,
-    body: JSON.stringify(body),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      code,
+      language: (language || "python").toLowerCase(),
+    }),
   });
 
   if (!response.ok) {
-    let detail = "Request failed";
+    let detail = "Execution failed";
     try {
       const data = (await response.json()) as {
         detail?: string;
@@ -143,102 +144,44 @@ async function postRunCodeMessage(message: string): Promise<
     } catch {
       // Ignore JSON parse errors.
     }
-    return { ok: false, error: detail };
+    return { output: detail, type: "error" };
   }
 
-  const contentType = response.headers.get("content-type") || "";
-
-  if (contentType.includes("application/json")) {
-    const data = (await response.json()) as { reply?: string };
-    return { ok: true, text: data.reply ?? "" };
+  const result = (await response.json()) as SandboxExecuteResponse;
+  if (result.timed_out) {
+    return { output: "Execution timed out after 10 seconds", type: "error" };
   }
+  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
 
-  if (!contentType.includes("text/event-stream")) {
+  if (stderr && !stdout) {
+    return { output: stderr, type: "error" };
+  }
+  if (stdout) {
+    const merged = stderr ? `${stdout}\n\n⚠️ Warnings:\n${stderr}` : stdout;
+    return { output: merged, type: "success" };
+  }
+  if (stderr) {
+    return { output: stderr, type: "error" };
+  }
+  if (typeof result.exit_code === "number" && result.exit_code !== 0) {
     return {
-      ok: false,
-      error: `Unexpected response: ${contentType || "unknown"}`,
+      output: `Execution failed (exit code ${result.exit_code})`,
+      type: "error",
     };
   }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    return { ok: false, error: "No response body" };
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let accumulated = "";
-  let streamError: string | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const raw = line.slice(6).trim();
-      if (!raw) continue;
-
-      try {
-        const event = JSON.parse(raw) as {
-          type: string;
-          content?: string;
-          message?: string;
-        };
-
-        if (event.type === "token" && typeof event.content === "string") {
-          accumulated += event.content;
-        } else if (event.type === "error") {
-          streamError = event.message || "Something went wrong";
-        }
-      } catch {
-        // Ignore malformed SSE JSON lines.
-      }
-    }
-  }
-
-  const tail = buffer.trim();
-  if (tail.startsWith("data: ")) {
-    const raw = tail.slice(6).trim();
-    if (raw) {
-      try {
-        const event = JSON.parse(raw) as {
-          type: string;
-          content?: string;
-          message?: string;
-        };
-        if (event.type === "token" && typeof event.content === "string") {
-          accumulated += event.content;
-        } else if (event.type === "error") {
-          streamError = event.message || "Something went wrong";
-        }
-      } catch {
-        // Ignore.
-      }
-    }
-  }
-
-  if (streamError) {
-    return { ok: false, error: streamError };
-  }
-  return { ok: true, text: accumulated };
+  return { output: "No output produced", type: "success" };
 }
 
-export function CodeBlock(props: CodeBlockProps) {
-  const { code, language } = props;
+function CodeBlockComponent(props: CodeBlockProps) {
+  const { code, language, isStreaming = false } = props;
 
   const [expanded, setExpanded] = useState(false);
   const [wordWrap, setWordWrap] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [runLoading, setRunLoading] = useState(false);
-  const [runOutput, setRunOutput] = useState<{
-    text: string;
-    isError: boolean;
-  } | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const [output, setOutput] = useState<string | null>(null);
+  const [outputType, setOutputType] = useState<"success" | "error" | null>(null);
 
   const lines = useMemo(() => code.split("\n"), [code]);
   const totalLines = lines.length;
@@ -251,7 +194,7 @@ export function CodeBlock(props: CodeBlockProps) {
 
   const prismLanguage = mapPrismLanguage(language);
   const label = badgeLabel(language);
-  const showRun = isRunnableLanguage(language);
+  const canRun = isRunnableLanguage(language);
 
   const handleCopy = async (event: ReactMouseEvent<HTMLButtonElement>) => {
     try {
@@ -266,23 +209,18 @@ export function CodeBlock(props: CodeBlockProps) {
 
   const handleRun = useCallback(async () => {
     const runLang = normalizeRunLanguage(language);
-    const message = `Run this ${runLang} code:\n\`\`\`${runLang}\n${code}\n\`\`\``;
-    setRunLoading(true);
-    setRunOutput(null);
+    setIsRunning(true);
+    setOutput(null);
+    setOutputType(null);
     try {
-      const result = await postRunCodeMessage(message);
-      if (result.ok) {
-        setRunOutput({ text: result.text.trim() || "(no output)", isError: false });
-      } else {
-        setRunOutput({ text: result.error, isError: true });
-      }
+      const result = await executeSandboxCode(code, runLang);
+      setOutput(result.output);
+      setOutputType(result.type);
     } catch (e) {
-      setRunOutput({
-        text: (e as Error)?.message || "Something went wrong",
-        isError: true,
-      });
+      setOutput(`Error: ${(e as Error)?.message || "Something went wrong"}`);
+      setOutputType("error");
     } finally {
-      setRunLoading(false);
+      setIsRunning(false);
     }
   }, [code, language]);
 
@@ -307,7 +245,7 @@ export function CodeBlock(props: CodeBlockProps) {
   return (
     <div
       className={`relative mb-3 overflow-hidden font-mono text-sm ${
-        runOutput ? "rounded-t-lg" : "rounded-lg"
+        output ? "rounded-t-lg" : "rounded-lg"
       }`}
     >
       <div
@@ -336,19 +274,23 @@ export function CodeBlock(props: CodeBlockProps) {
           >
             <WrapText className="size-3.5" aria-hidden />
           </button>
-          {showRun && (
+          {canRun && (
             <button
               type="button"
               onClick={handleRun}
-              disabled={runLoading}
-              className="relative inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[rgba(34,197,94,0.7)] transition-colors hover:text-[rgba(34,197,94,1)] disabled:opacity-60"
+              disabled={isRunning}
+              title="Run code"
+              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-green-400/70 transition-all duration-150 hover:bg-green-400/10 hover:text-green-400 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {runLoading ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+              {isRunning ? (
+                <div
+                  className="h-3 w-3 animate-spin rounded-full border border-green-400/40 border-t-green-400"
+                  aria-hidden
+                />
               ) : (
-                <Play className="size-3.5 shrink-0" aria-hidden />
+                <Play size={12} />
               )}
-              <span>Run</span>
+              <span>{isRunning ? "Running..." : "Run"}</span>
             </button>
           )}
           <button
@@ -394,16 +336,31 @@ export function CodeBlock(props: CodeBlockProps) {
       </div>
 
       <div className="relative">
-        <SyntaxHighlighter
-          style={oneDark}
-          language={prismLanguage}
-          PreTag="div"
-          showLineNumbers
-          lineNumberStyle={LINE_NUMBER_STYLE}
-          customStyle={highlighterCustomStyle}
-        >
-          {displayCode}
-        </SyntaxHighlighter>
+        {isStreaming ? (
+          <pre
+            className="overflow-x-auto p-4 text-sm text-white/80"
+            style={{
+              background: "#282c34",
+              maxHeight: codeMaxHeight,
+              overflowY: "auto",
+              whiteSpace: wordWrap ? "pre-wrap" : "pre",
+              wordBreak: wordWrap ? "break-word" : "normal",
+            }}
+          >
+            <code>{displayCode}</code>
+          </pre>
+        ) : (
+          <SyntaxHighlighter
+            style={oneDark}
+            language={prismLanguage}
+            PreTag="div"
+            showLineNumbers
+            lineNumberStyle={LINE_NUMBER_STYLE}
+            customStyle={highlighterCustomStyle}
+          >
+            {displayCode}
+          </SyntaxHighlighter>
+        )}
 
         {needsCollapse && !expanded && (
           <>
@@ -441,58 +398,40 @@ export function CodeBlock(props: CodeBlockProps) {
       </div>
 
       <AnimatePresence>
-        {runOutput && (
+        {output !== null && outputType && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.22, ease: "easeOut" }}
-            className="overflow-hidden"
+            className={`overflow-hidden border-t border-white/5 ${
+              outputType === "error"
+                ? "border-l-2 border-l-red-500/50 bg-red-500/5"
+                : "border-l-2 border-l-green-500/50 bg-green-500/5"
+            }`}
           >
-            <div
-              className="relative border border-t-0 px-4 py-3 font-mono text-[13px] leading-relaxed"
-              style={{
-                background: "rgba(0,0,0,0.4)",
-                borderColor: runOutput.isError
-                  ? "rgba(239,68,68,0.2)"
-                  : "rgba(34,197,94,0.2)",
-                borderLeftWidth: 3,
-                borderLeftStyle: "solid",
-                borderLeftColor: runOutput.isError ? "#ef4444" : "#22c55e",
-                borderRadius: "0 0 8px 8px",
-                maxHeight: 200,
-                overflowY: "auto",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setRunOutput(null)}
-                className="absolute right-2 top-2 rounded p-1 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
-                aria-label="Dismiss output"
-              >
-                <X className="size-3.5" />
-              </button>
-              <div
-                className="mb-2 flex items-center gap-1 pr-8 text-[11px] font-semibold uppercase tracking-wide"
-                style={{
-                  color: runOutput.isError ? "#ef4444" : "#22c55e",
-                }}
-              >
-                {runOutput.isError ? (
-                  <>
-                    <XCircle className="size-3.5 shrink-0" aria-hidden />
-                    <span>Error</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="size-3.5 shrink-0" aria-hidden />
-                    <span>Output</span>
-                  </>
-                )}
+            <div>
+              <div className="flex items-center justify-between px-4 py-2">
+                <span
+                  className={`text-xs font-medium ${
+                    outputType === "error" ? "text-red-400" : "text-green-400"
+                  }`}
+                >
+                  {outputType === "error" ? "✗ Error" : "▶ Output"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOutput(null);
+                    setOutputType(null);
+                  }}
+                  className="text-xs text-white/20 transition-colors hover:text-white/50"
+                >
+                  ✕
+                </button>
               </div>
-              <div className="text-white/85">{runOutput.text}</div>
+              <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap break-words px-4 pb-4 font-mono text-sm text-white/80">
+                {output}
+              </pre>
             </div>
           </motion.div>
         )}
@@ -500,3 +439,12 @@ export function CodeBlock(props: CodeBlockProps) {
     </div>
   );
 }
+
+export const CodeBlock = memo(
+  CodeBlockComponent,
+  (prev, next) =>
+    prev.code === next.code &&
+    prev.language === next.language &&
+    prev.conversationId === next.conversationId &&
+    prev.isStreaming === next.isStreaming
+);

@@ -44,6 +44,7 @@ import { parseFile } from "../lib/api";
 import { getTemplates, Template } from "../lib/templates";
 import { getSmartSuggestions, type Suggestion } from "@/lib/history";
 import { useToast } from "@/components/Toast";
+import { Haptics } from "@/lib/haptics";
 
 function getRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -306,6 +307,7 @@ export function ChatInput({
       window.setTimeout(() => setIsInputShaking(false), 450);
       return;
     }
+    Haptics.send();
     setSuggestions([]);
     setShowSuggestions(false);
     setIsFetchingSuggestions(false);

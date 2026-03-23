@@ -100,7 +100,7 @@ export default function ProjectsPage() {
             {projects.map((project) => (
               <div
                 key={project.id}
-                className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-shadow hover:shadow-lg dark:bg-[#0d0b1a]"
+                className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-shadow hover:shadow-lg dark:border-white/10 dark:bg-[rgba(15,15,20,0.8)]"
               >
                 {/* Color bar */}
                 <div className="h-1 w-full" style={{ background: project.color }} />
@@ -146,15 +146,15 @@ export default function ProjectsPage() {
                   </div>
 
                   {/* Name + description */}
-                  <h3 className="mb-1 text-[15px] font-bold text-foreground">{project.name}</h3>
+                  <h3 className="mb-1 text-[15px] font-bold text-foreground dark:text-white">{project.name}</h3>
                   {project.description && (
-                    <p className="mb-3 line-clamp-2 text-[13px] text-muted-foreground">
+                    <p className="mb-3 line-clamp-2 text-[13px] text-muted-foreground dark:text-white/55">
                       {project.description}
                     </p>
                   )}
 
                   {/* Stats */}
-                  <p className="mt-auto text-[12px] text-muted-foreground">
+                  <p className="mt-auto text-[12px] text-muted-foreground dark:text-white/40">
                     {project.file_count} file{project.file_count !== 1 ? "s" : ""} ·{" "}
                     {formatFileSize(project.total_size)}
                   </p>

@@ -4,10 +4,12 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   BarChart2,
   BookOpen,
@@ -23,6 +25,7 @@ import {
   LogOut,
   MessageCircle,
   Moon,
+  PanelLeftOpen,
   PanelLeftClose,
   PenLine,
   Plus,
@@ -101,6 +104,19 @@ import {
 } from "@/lib/history";
 import { useMobileKeyboardOpen } from "@/hooks/useMobileKeyboardOpen";
 import { createClient } from "@/lib/supabase";
+import { Haptics } from "@/lib/haptics";
+import { ReactionAnimation } from "@/components/ReactionAnimation";
+import { ConversationPreview } from "@/components/ConversationPreview";
+
+const RESPONSE_ACTION_TAGS: Record<string, string> = {
+  continue: "→ Continue",
+  shorter: "↺ Make shorter",
+  longer: "↺ Make longer",
+  simpler: "↺ Simplify",
+  different: "↺ Try differently",
+  examples: "↺ Add examples",
+  bullets: "↺ Use bullets",
+};
 
 // Maps conversation title keywords to a Lucide icon component and its color tokens.
 type IconConfig = {
@@ -206,6 +222,7 @@ function formatRelativeTime(isoDate: string): string {
 
 function HomeContent() {
   type UserLike = { id?: string; email?: string | null };
+  type FontSize = "small" | "medium" | "large";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
   const [modelsById, setModelsById] = useState<
@@ -213,6 +230,11 @@ function HomeContent() {
   >({} as Record<ModelId, AvailableModel>);
   const [selectedModel, setSelectedModel] = useState<ModelId | null>("auto");
   const [isLoading, setIsLoading] = useState(false);
+  const [fontSize, setFontSize] = useState<FontSize>(() => {
+    if (typeof window === "undefined") return "medium";
+    const stored = window.localStorage.getItem("prism_font_size");
+    return stored === "small" || stored === "large" ? stored : "medium";
+  });
   const [inputValue, setInputValue] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
@@ -266,15 +288,23 @@ function HomeContent() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const searchDebounceRef = useRef<number | null>(null);
+  const [hoveredConvId, setHoveredConvId] = useState<string | null>(null);
+  const [hoveredRect, setHoveredRect] = useState<DOMRect | null>(null);
+  const hoverTimerRef = useRef<number | null>(null);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [confettiCount, setConfettiCount] = useState(60);
+  const [showMilestone, setShowMilestone] = useState(false);
 
-  // Track whether the splash overlay should exist in the DOM at all.
-  // Always starts as true so the server and first client render match (no
-  // hydration mismatch). A one-time effect immediately hides it on the client
-  // if the user has already dismissed it.
+  // First-ever visit: show splash/meteor. Returning visitors skip via localStorage.
   const [showSplash, setShowSplash] = useState(true);
-  useEffect(() => {
-    if (window.sessionStorage.getItem("prism_splash_shown") === "1") {
-      setShowSplash(false);
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (localStorage.getItem("prism_visited")) {
+        setShowSplash(false);
+      }
+    } catch {
+      /* localStorage unavailable */
     }
   }, []);
   const splashWarpTimeoutsRef = useRef<number[]>([]);
@@ -385,6 +415,9 @@ function HomeContent() {
         window.clearTimeout(t)
       );
       sidebarAnimTimeoutsRef.current = [];
+      if (hoverTimerRef.current != null) {
+        window.clearTimeout(hoverTimerRef.current);
+      }
     };
   }, []);
 
@@ -418,6 +451,7 @@ function HomeContent() {
       } = await supabase.auth.getSession();
       if (isCancelled) return;
       if (!session) {
+        setShowLoading(false);
         router.push("/landing");
         return;
       }
@@ -437,6 +471,7 @@ function HomeContent() {
         } catch {
           /* sessionStorage unavailable */
         }
+        setShowLoading(false);
         setUser(null);
         router.push("/landing");
       } else {
@@ -480,11 +515,10 @@ function HomeContent() {
   }, [router, supabase]);
 
   // Bootstrap: profile, conversations, projects, embeddings; optional full loading UI.
+  // Deferred until splash is done so first-time visitors see splash → then loading → chat.
   useEffect(() => {
-    if (!user) {
-      setShowLoading(false);
-      return;
-    }
+    if (!user) return;
+    if (showSplash) return;
 
     const runId = ++bootstrapRunIdRef.current;
     let cancelled = false;
@@ -658,7 +692,7 @@ function HomeContent() {
       cancelled = true;
       clearSafety();
     };
-  }, [user, supabase]);
+  }, [user, supabase, showSplash]);
 
   // Load sidebar collapsed state (and default to collapsed on small screens).
   useEffect(() => {
@@ -681,6 +715,8 @@ function HomeContent() {
     if (isMobile) {
       setIsSidebarCollapsed((prev) => {
         const next = !prev;
+        if (next) Haptics.sidebarClose();
+        else Haptics.sidebarOpen();
         setIsSidebarContentVisible(!next);
         try {
           window.localStorage.setItem(
@@ -702,6 +738,7 @@ function HomeContent() {
     sidebarAnimTimeoutsRef.current = [];
 
     if (!isSidebarCollapsed) {
+      Haptics.sidebarClose();
       // Start fading out immediately, delay the width collapse.
       setIsSidebarContentVisible(false);
       const t = window.setTimeout(() => {
@@ -717,6 +754,7 @@ function HomeContent() {
     }
 
     // Start expanding the width immediately, delay content fade-in.
+    Haptics.sidebarOpen();
     setIsSidebarContentVisible(false);
     setIsSidebarCollapsed(false);
     try {
@@ -997,6 +1035,7 @@ function HomeContent() {
   ]);
 
   const handleCreateConversation = () => {
+    Haptics.press();
     setActiveConversationId(null);
     setMessages([]);
     setInputValue("");
@@ -1053,6 +1092,11 @@ function HomeContent() {
     // states regardless of what happened above.
     splashWarpTimeoutsRef.current.push(
       window.setTimeout(() => {
+        try {
+          localStorage.setItem("prism_visited", "true");
+        } catch {
+          /* localStorage unavailable */
+        }
         setShowSplash(false);
         setIsSplashWarping(false);
         setIsChatWarpingIn(false);
@@ -1062,8 +1106,33 @@ function HomeContent() {
   };
 
   const handleOpenConversation = async (id: string) => {
+    Haptics.tap();
     const conv = conversations.find((c) => c.id === id);
     await openConversationById(id, conv);
+  };
+
+  const handleConversationHoverStart = (
+    conversationId: string,
+    rect: DOMRect
+  ) => {
+    if (typeof window === "undefined") return;
+    if (window.innerWidth <= 768) return;
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+    }
+    hoverTimerRef.current = window.setTimeout(() => {
+      setHoveredConvId(conversationId);
+      setHoveredRect(rect);
+    }, 400);
+  };
+
+  const handleConversationHoverEnd = () => {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setHoveredConvId(null);
+    setHoveredRect(null);
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -1323,6 +1392,28 @@ function HomeContent() {
       assistantPlaceholder,
     ];
     setMessages(initialMessages);
+    try {
+      const firstSent = localStorage.getItem("prism_first_message_sent");
+      if (!firstSent) {
+        localStorage.setItem("prism_first_message_sent", "true");
+        setConfettiCount(60);
+        setShowConfetti(true);
+        window.setTimeout(() => setShowConfetti(false), 3000);
+        Haptics.milestone();
+      }
+      const count =
+        parseInt(localStorage.getItem("prism_message_count") || "0", 10) + 1;
+      localStorage.setItem("prism_message_count", String(count));
+      if (count === 100) {
+        setConfettiCount(120);
+        setShowConfetti(true);
+        window.setTimeout(() => setShowConfetti(false), 3000);
+        setShowMilestone(true);
+        Haptics.milestone();
+      }
+    } catch {
+      /* localStorage unavailable */
+    }
 
     let assistantContent = "";
     let latestMetadata:
@@ -1534,6 +1625,38 @@ function HomeContent() {
       });
       return prev.slice(0, messageIndex);
     });
+  };
+
+  const handleResponseAction = (
+    actionId: string,
+    prompt: string,
+    messageIndex: number
+  ) => {
+    if (isLoading) return;
+
+    if (actionId === "continue") {
+      void handleSend(
+        "Continue from where you left off. Don't repeat what you already said."
+      );
+      return;
+    }
+
+    if (actionId === "different") {
+      const lastUserMsg =
+        messages
+          .slice(0, messageIndex)
+          .reverse()
+          .find((m) => m.role === "user")?.content || "";
+      const diffPrompt = `Please answer this question using a completely different approach: "${String(
+        lastUserMsg
+      ).slice(0, 100)}"`;
+      void handleSend(diffPrompt);
+      return;
+    }
+
+    const label = RESPONSE_ACTION_TAGS[actionId] ?? "↺ Refine";
+    const taggedMessage = `${label}\n${prompt}`;
+    void handleSend(taggedMessage);
   };
 
   const handleEditMessage = (messageIndex: number, newContent: string) => {
@@ -1831,79 +1954,161 @@ function HomeContent() {
     : isChatWarpingIn
     ? "prism-warp-chat-in"
     : "prism-warp-chat-pre";
-
-  const chatBootHidden = showLoading && !showSplash;
+  const hoveredConversation =
+    hoveredConvId != null
+      ? conversations.find((c) => c.id === hoveredConvId) ?? null
+      : null;
 
   return (
     <ToastProvider>
       <>
-      {/*
-        Splash overlay — conditionally mounted so it is fully removed from the
-        DOM (no pointer-event blocking, no z-index residue) once the transition
-        is complete. pointer-events are also disabled during the warp itself.
-      */}
-      {showSplash && (
-        <div
-          className="fixed inset-0 z-[9999]"
-          style={{ pointerEvents: isSplashWarping ? "none" : "auto" }}
-        >
-          <SplashScreen onEnter={handleSplashEnter} />
-          {isSplashWarping && (
-            <div className="prism-meteor-layer" aria-hidden>
-              {Array.from({ length: 10 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="prism-meteor-streak"
-                  style={{
-                    left: `${10 + i * 8}%`,
-                    animationDelay: `${i * 45}ms`,
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Onboarding overlay — shown once after first login, sits above the chat UI */}
-      {showOnboarding && (
-        <Onboarding
-          initialName={onboardingName}
-          onComplete={(firstMessage) => {
-            setShowOnboarding(false);
-            if (firstMessage) setInputValue(firstMessage);
-          }}
-        />
-      )}
-
       <div className="relative min-h-screen w-full">
-        {user && showLoading && !showSplash && (
-          <div className="absolute inset-0 z-[9999]">
-            <LoadingScreen
-              isNewUser={bootIsNewUser}
-              userName={bootFirstName}
-              progress={loadingProgress}
-              onComplete={handleBootLoadingComplete}
-            />
-          </div>
-        )}
+        {/* 1. Loading — after splash; black layer under LoadingScreen */}
+        <AnimatePresence>
+          {showLoading && !showSplash && (
+            <motion.div
+              key="loading"
+              initial={{ opacity: 1 }}
+              exit={{ opacity: 0, scale: 1.05 }}
+              transition={{ duration: 0.5, ease: "easeIn" }}
+              className="fixed inset-0 z-[9999] bg-black"
+            >
+              <LoadingScreen
+                isNewUser={bootIsNewUser}
+                userName={bootFirstName}
+                progress={loadingProgress}
+                onComplete={handleBootLoadingComplete}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
+        {/* 2. Onboarding — after loading completes */}
+        <AnimatePresence>
+          {!showLoading && showOnboarding && (
+            <motion.div
+              key="onboarding"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="fixed inset-0 z-[9998]"
+            >
+              <Onboarding
+                initialName={onboardingName}
+                onComplete={(firstMessage) => {
+                  setShowOnboarding(false);
+                  if (firstMessage) setInputValue(firstMessage);
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* 3. Chat chrome — unmounted while loading so nothing flashes underneath */}
+        {!showLoading && (
+          <motion.div
+            key="chat-shell"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4 }}
+            className="min-h-screen w-full"
+          >
         {/*
         Stable layout root — never has a transform applied, so all
         position:fixed children (sidebar, input bar) anchor correctly to
         the viewport regardless of what animation is running on the content.
       */}
-        <motion.div
+        <div
           suppressHydrationWarning
           className="min-h-screen bg-background text-foreground transition-colors duration-200"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: chatBootHidden ? 0 : 1 }}
-          transition={{
-            duration: 0.4,
-            delay: chatBootHidden ? 0 : 0.1,
-            ease: "easeOut",
-          }}
         >
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="fixed left-4 top-4 z-[100] inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] border border-white/[0.08] bg-white/[0.06] text-white/70 transition-all duration-150 hover:bg-white/[0.1] hover:text-white"
+          aria-label={isSidebarCollapsed ? "Open sidebar" : "Close sidebar"}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            {isSidebarCollapsed ? (
+              <motion.span
+                key="open"
+                initial={{ rotate: 90, opacity: 0 }}
+                animate={{ rotate: 0, opacity: 1 }}
+                exit={{ rotate: -90, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="inline-flex"
+              >
+                <PanelLeftOpen size={18} />
+              </motion.span>
+            ) : (
+              <motion.span
+                key="close"
+                initial={{ rotate: -90, opacity: 0 }}
+                animate={{ rotate: 0, opacity: 1 }}
+                exit={{ rotate: 90, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="inline-flex"
+              >
+                <PanelLeftClose size={18} />
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </button>
+
+        {!isMobile && isSidebarCollapsed && (
+          <aside className="fixed left-0 top-0 z-40 hidden h-screen w-12 flex-col items-center gap-2 border-r border-white/[0.06] bg-[#f5f3ff] py-3 dark:bg-[#0d0b1a] md:flex">
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              title="Open sidebar"
+              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-foreground/60 transition-colors hover:bg-white/10 hover:text-foreground"
+            >
+              <PanelLeftOpen size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateConversation}
+              title="New chat"
+              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-foreground/60 transition-colors hover:bg-white/10 hover:text-foreground"
+            >
+              <PenLine size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/projects")}
+              title="Projects"
+              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-foreground/60 transition-colors hover:bg-white/10 hover:text-foreground"
+            >
+              <FolderOpen size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsSidebarCollapsed(false);
+                setIsSidebarContentVisible(true);
+                router.push("/?search=true");
+              }}
+              title="Search"
+              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-foreground/60 transition-colors hover:bg-white/10 hover:text-foreground"
+            >
+              <Search size={16} />
+            </button>
+            <div className="my-1 h-px w-6 bg-white/10" />
+            {orderedConversations.slice(0, 5).map((conv) => (
+              <button
+                key={`rail-${conv.id}`}
+                type="button"
+                onClick={() => void handleOpenConversation(conv.id)}
+                title={conv.title}
+                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-violet-500/30 bg-black/20 text-[11px] font-semibold text-violet-300 transition-colors hover:bg-violet-500/20 hover:text-white"
+              >
+                {conv.title.trim().charAt(0).toUpperCase() || "•"}
+              </button>
+            ))}
+          </aside>
+        )}
+
         {/* Fixed sidebar — lives in the stable root so position:fixed anchors
             to the viewport and is never affected by the warp animation. */}
         <aside
@@ -1950,19 +2155,6 @@ function HomeContent() {
                     Prism
                   </span>
               </div>
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                className="hidden md:inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-xs text-foreground shadow-sm transition-colors hover:bg-muted"
-                aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              >
-                <PanelLeftClose
-                  className={`size-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                    isSidebarCollapsed ? "rotate-180" : "rotate-0"
-                  }`}
-                  style={{ willChange: "transform" }}
-                />
-              </button>
             </div>
 
             <div
@@ -2148,33 +2340,43 @@ function HomeContent() {
                               const { animClass, rowSurface, iconSpan, textBlock } =
                                 getConversationRowChrome(conversation);
                               return (
-                                <PinnedDesktopConversationRow
+                                <div
                                   key={conversation.id}
-                                  animClass={`group ${animClass}`}
-                                  rowSurface={rowSurface}
-                                  topicIcon={iconSpan}
-                                  textBlock={textBlock}
-                                  bulkSelectMode={bulkSelectMode}
-                                  isSelected={bulkSelectedIds.has(
-                                    conversation.id
-                                  )}
-                                  onToggleSelected={() =>
-                                    toggleConversationBulkSelect(
-                                      conversation.id
+                                  onMouseEnter={(e) =>
+                                    handleConversationHoverStart(
+                                      conversation.id,
+                                      e.currentTarget.getBoundingClientRect()
                                     )
                                   }
-                                  onBulkLongPress={() =>
-                                    enterBulkViaLongPress(conversation.id)
-                                  }
-                                  onOpen={() =>
-                                    void handleOpenConversation(
+                                  onMouseLeave={handleConversationHoverEnd}
+                                >
+                                  <PinnedDesktopConversationRow
+                                    animClass={`group ${animClass}`}
+                                    rowSurface={rowSurface}
+                                    topicIcon={iconSpan}
+                                    textBlock={textBlock}
+                                    bulkSelectMode={bulkSelectMode}
+                                    isSelected={bulkSelectedIds.has(
                                       conversation.id
-                                    )
-                                  }
-                                  onDelete={() =>
-                                    handleDeleteConversation(conversation.id)
-                                  }
-                                />
+                                    )}
+                                    onToggleSelected={() =>
+                                      toggleConversationBulkSelect(
+                                        conversation.id
+                                      )
+                                    }
+                                    onBulkLongPress={() =>
+                                      enterBulkViaLongPress(conversation.id)
+                                    }
+                                    onOpen={() =>
+                                      void handleOpenConversation(
+                                        conversation.id
+                                      )
+                                    }
+                                    onDelete={() =>
+                                      handleDeleteConversation(conversation.id)
+                                    }
+                                  />
+                                </div>
                               );
                             })}
                             <DndContext
@@ -2198,38 +2400,48 @@ function HomeContent() {
                                       textBlock,
                                     } = getConversationRowChrome(conversation);
                                     return (
-                                      <SortableDesktopConversationRow
+                                      <div
                                         key={conversation.id}
-                                        id={conversation.id}
-                                        animClass={`group ${animClass}`}
-                                        rowSurface={rowSurface}
-                                        topicIcon={iconSpan}
-                                        textBlock={textBlock}
-                                        bulkSelectMode={bulkSelectMode}
-                                        isSelected={bulkSelectedIds.has(
-                                          conversation.id
-                                        )}
-                                        onToggleSelected={() =>
-                                          toggleConversationBulkSelect(
-                                            conversation.id
+                                        onMouseEnter={(e) =>
+                                          handleConversationHoverStart(
+                                            conversation.id,
+                                            e.currentTarget.getBoundingClientRect()
                                           )
                                         }
-                                        onBulkLongPress={() =>
-                                          enterBulkViaLongPress(
+                                        onMouseLeave={handleConversationHoverEnd}
+                                      >
+                                        <SortableDesktopConversationRow
+                                          id={conversation.id}
+                                          animClass={`group ${animClass}`}
+                                          rowSurface={rowSurface}
+                                          topicIcon={iconSpan}
+                                          textBlock={textBlock}
+                                          bulkSelectMode={bulkSelectMode}
+                                          isSelected={bulkSelectedIds.has(
                                             conversation.id
-                                          )
-                                        }
-                                        onOpen={() =>
-                                          void handleOpenConversation(
-                                            conversation.id
-                                          )
-                                        }
-                                        onDelete={() =>
-                                          handleDeleteConversation(
-                                            conversation.id
-                                          )
-                                        }
-                                      />
+                                          )}
+                                          onToggleSelected={() =>
+                                            toggleConversationBulkSelect(
+                                              conversation.id
+                                            )
+                                          }
+                                          onBulkLongPress={() =>
+                                            enterBulkViaLongPress(
+                                              conversation.id
+                                            )
+                                          }
+                                          onOpen={() =>
+                                            void handleOpenConversation(
+                                              conversation.id
+                                            )
+                                          }
+                                          onDelete={() =>
+                                            handleDeleteConversation(
+                                              conversation.id
+                                            )
+                                          }
+                                        />
+                                      </div>
                                     );
                                   }
                                 )}
@@ -2547,6 +2759,7 @@ function HomeContent() {
             const deltaY = t.clientY - touchStartYRef.current;
             if (Math.abs(deltaY) > 75) return;
             if (deltaX > 50 && touchStartXRef.current < 30) {
+              Haptics.sidebarOpen();
               setIsSidebarCollapsed(false);
               setIsSidebarContentVisible(true);
               try {
@@ -2556,6 +2769,7 @@ function HomeContent() {
               }
             }
             if (deltaX < -50 && !isSidebarCollapsed) {
+              Haptics.sidebarClose();
               setIsSidebarCollapsed(true);
               try {
                 window.localStorage.setItem("prism_sidebar_collapsed", "1");
@@ -2668,6 +2882,57 @@ function HomeContent() {
                 )}
               </div>
 
+              <div className="flex items-center gap-0.5 rounded-lg border border-border bg-background p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFontSize("small");
+                    window.localStorage.setItem("prism_font_size", "small");
+                    Haptics.tap();
+                  }}
+                  className={`rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 ${
+                    fontSize === "small"
+                      ? "border border-purple-500/40 bg-purple-500/20 text-[rgba(200,180,255,0.95)]"
+                      : "text-white/40 hover:text-white/80"
+                  }`}
+                  title="Small text"
+                >
+                  A
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFontSize("medium");
+                    window.localStorage.setItem("prism_font_size", "medium");
+                    Haptics.tap();
+                  }}
+                  className={`rounded-md px-2 py-1 text-sm font-medium transition-all duration-150 ${
+                    fontSize === "medium"
+                      ? "border border-purple-500/40 bg-purple-500/20 text-[rgba(200,180,255,0.95)]"
+                      : "text-white/40 hover:text-white/80"
+                  }`}
+                  title="Medium text"
+                >
+                  A
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFontSize("large");
+                    window.localStorage.setItem("prism_font_size", "large");
+                    Haptics.tap();
+                  }}
+                  className={`rounded-md px-2 py-1 text-base font-medium transition-all duration-150 ${
+                    fontSize === "large"
+                      ? "border border-purple-500/40 bg-purple-500/20 text-[rgba(200,180,255,0.95)]"
+                      : "text-white/40 hover:text-white/80"
+                  }`}
+                  title="Large text"
+                >
+                  A
+                </button>
+              </div>
+
               {/* Theme toggle */}
               <button
                 type="button"
@@ -2735,8 +3000,10 @@ function HomeContent() {
               isLoading={isLoading}
               conversationId={activeConversationId}
               scrollToBottomSignal={chatScrollSignal}
+              fontSize={fontSize}
               onRegenerate={handleRegenerate}
               onEditMessage={handleEditMessage}
+              onResponseAction={handleResponseAction}
               onQuoteReply={handleQuoteReply}
               onSuggestionClick={(text) => {
                 setInputValue(text);
@@ -2794,8 +3061,7 @@ function HomeContent() {
             }}
           />
         </div>
-        </motion.div>
-      </div>
+        </div>
 
       <ConversationContextMenu
         open={contextMenu !== null}
@@ -2928,8 +3194,6 @@ function HomeContent() {
         </div>
       )}
 
-      <ToastContainer />
-
       {/* Keyboard shortcuts modal */}
       {isShortcutsOpen && (
         <div
@@ -2973,6 +3237,66 @@ function HomeContent() {
           </div>
         </div>
       )}
+        </motion.div>
+        )}
+
+        <ReactionAnimation
+          showConfetti={showConfetti}
+          confettiCount={confettiCount}
+          showMilestone={showMilestone}
+          onCloseMilestone={() => setShowMilestone(false)}
+        />
+
+        <AnimatePresence>
+          {hoveredConversation &&
+            hoveredRect &&
+            typeof window !== "undefined" &&
+            window.innerWidth > 768 &&
+            createPortal(
+              <ConversationPreview
+                conversation={hoveredConversation}
+                anchorRect={hoveredRect}
+                onClose={() => { setHoveredConvId(null); setHoveredRect(null); }}
+              />,
+              document.body
+            )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showSplash && (
+            <motion.div
+              key="splash"
+              initial={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35 }}
+              className="fixed inset-0 z-[10000]"
+            >
+              <div
+                className="h-full w-full"
+                style={{ pointerEvents: isSplashWarping ? "none" : "auto" }}
+              >
+                <SplashScreen onEnter={handleSplashEnter} />
+                {isSplashWarping && (
+                  <div className="prism-meteor-layer" aria-hidden>
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className="prism-meteor-streak"
+                        style={{
+                          left: `${10 + i * 8}%`,
+                          animationDelay: `${i * 45}ms`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <ToastContainer />
       </>
     </ToastProvider>
   );

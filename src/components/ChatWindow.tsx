@@ -28,14 +28,12 @@ import { MessageActionsBar } from "@/components/MessageActionsBar";
 import { submitFeedback } from "@/lib/feedback";
 import { PlotRenderer } from "@/components/PlotRenderer";
 import { ImageRenderer } from "@/components/ImageRenderer";
-import { CodeBlock } from "@/components/CodeBlock";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeRaw from "rehype-raw";
-import type { Components } from "react-markdown";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { AnimatePresence, motion } from "motion/react";
 import { useToast } from "@/components/Toast";
 import { formatMessageTime } from "@/lib/messageTime";
+import { Haptics } from "@/lib/haptics";
+import { ResponseActions } from "@/components/ResponseActions";
 
 type ChatWindowProps = {
   messages: ChatMessage[];
@@ -50,6 +48,12 @@ type ChatWindowProps = {
   scrollToBottomSignal?: number;
   onRegenerate?: (messageIndex: number) => void;
   onEditMessage?: (messageIndex: number, newContent: string) => void;
+  fontSize?: "small" | "medium" | "large";
+  onResponseAction?: (
+    actionId: string,
+    prompt: string,
+    messageIndex: number
+  ) => void;
 };
 
 // Basic parser to split plain text and fenced code blocks for readable display.
@@ -100,258 +104,136 @@ function spawnRipple(
   window.setTimeout(() => ripple.remove(), 400);
 }
 
-// Closes dangling ** / * / ` while streaming so partial markdown still parses.
-function fixPartialMarkdown(text: string): string {
-  let result = text;
-  const boldCount = (result.match(/\*\*/g) || []).length;
-  if (boldCount % 2 !== 0) {
-    result += "**";
-  }
-  const singleStars = result.replace(/\*\*/g, "");
-  const italicCount = (singleStars.match(/\*/g) || []).length;
-  if (italicCount % 2 !== 0) {
-    result += "*";
-  }
-  const backtickCount = (result.match(/`/g) || []).length;
-  if (backtickCount % 2 !== 0) {
-    result += "`";
-  }
-  return result;
-}
+const SCROLL_PADDING_BOTTOM = 80;
+const USER_SCROLL_UP_DISTANCE = 100;
+const AT_BOTTOM_DISTANCE = 50;
+const NEAR_BOTTOM_FOLLOW = 150;
+const STREAM_BOTTOM_SLACK = 20;
 
-// Renders assistant text as GitHub-flavored markdown with shared code block styling.
-function AssistantMarkdown(props: {
-  content: string;
-  conversationId?: string | null;
-}) {
-  const { content, conversationId } = props;
-
-  const markdownComponents: Partial<Components> = {
-    h1: ({ children, ...rest }) => (
-      <h1
-        className="mb-3 mt-4 text-2xl font-bold text-white"
-        {...rest}
-      >
-        {children}
-      </h1>
-    ),
-    h2: ({ children, ...rest }) => (
-      <h2
-        className="mb-2 mt-4 text-xl font-bold text-white"
-        {...rest}
-      >
-        {children}
-      </h2>
-    ),
-    h3: ({ children, ...rest }) => (
-      <h3
-        className="mb-2 mt-3 text-lg font-semibold text-white"
-        {...rest}
-      >
-        {children}
-      </h3>
-    ),
-    p: ({ children, ...rest }) => (
-      <p className="mb-3 leading-7 last:mb-0" {...rest}>
-        {children}
-      </p>
-    ),
-    ul: ({ children, ...rest }) => (
-      <ul className="mb-3 ml-4 list-disc space-y-1" {...rest}>
-        {children}
-      </ul>
-    ),
-    ol: ({ children, ...rest }) => (
-      <ol className="mb-3 ml-4 list-decimal space-y-1" {...rest}>
-        {children}
-      </ol>
-    ),
-    li: ({ children, ...rest }) => (
-      <li className="leading-7" {...rest}>
-        {children}
-      </li>
-    ),
-    blockquote: ({ children, ...rest }) => (
-      <blockquote
-        className="my-3 border-l-4 border-purple-500/50 pl-4 italic text-white/70"
-        {...rest}
-      >
-        {children}
-      </blockquote>
-    ),
-    hr: () => <hr className="my-4 border-white/10" />,
-    a: ({ children, href, ...rest }) => (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-purple-400 underline hover:text-purple-300"
-        {...rest}
-      >
-        {children}
-      </a>
-    ),
-    strong: ({ children, ...rest }) => (
-      <strong className="font-bold text-white" {...rest}>
-        {children}
-      </strong>
-    ),
-    em: ({ children, ...rest }) => (
-      <em className="italic text-white/90" {...rest}>
-        {children}
-      </em>
-    ),
-    del: ({ children, ...rest }) => (
-      <del className="text-white/50 line-through" {...rest}>
-        {children}
-      </del>
-    ),
-    table: ({ children, ...rest }) => (
-      <div className="my-3 overflow-x-auto">
-        <table
-          className="w-full border-collapse text-sm"
-          {...rest}
-        >
-          {children}
-        </table>
-      </div>
-    ),
-    thead: ({ children, ...rest }) => <thead {...rest}>{children}</thead>,
-    tbody: ({ children, ...rest }) => (
-      <tbody className="[&>tr:nth-child(even)]:bg-muted/35" {...rest}>
-        {children}
-      </tbody>
-    ),
-    tr: ({ children, ...rest }) => <tr {...rest}>{children}</tr>,
-    th: ({ children, ...rest }) => (
-      <th
-        className="border border-white/10 bg-white/5 px-3 py-2 text-left font-semibold text-white"
-        {...rest}
-      >
-        {children}
-      </th>
-    ),
-    td: ({ children, ...rest }) => (
-      <td
-        className="border border-white/10 px-3 py-2 text-white/80"
-        {...rest}
-      >
-        {children}
-      </td>
-    ),
-    // Let the `code` renderer handle both inline + fenced blocks.
-    // Avoid rendering children directly here to prevent inline styles from bleeding into fenced blocks.
-    pre: ({ children }) => <>{children}</>,
-    code: ({ className, children, node: _node, ...props }) => {
-      const match = /language-(\w+)/.exec(className || "");
-
-      const rawChildren = children ?? "";
-      const codeString = (Array.isArray(rawChildren)
-        ? rawChildren.join("")
-        : String(rawChildren)
-      ).replace(/\n$/, "");
-
-      const language = match ? match[1] : "text";
-      const isFencedBlock = Boolean(match) || codeString.includes("\n");
-
-      if (isFencedBlock) {
-        return (
-          <CodeBlock
-            code={codeString}
-            language={language}
-            conversationId={conversationId}
-          />
-        );
-      }
-
-      return (
-        <code
-          className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-sm"
-          {...props}
-        >
-          {children}
-        </code>
-      );
-    },
-  };
-
-  return (
-    <div className="text-[15px] leading-relaxed">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw]}
-        components={markdownComponents}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+function instantScrollToBottom(container: HTMLElement) {
+  container.scrollTop = Math.max(
+    0,
+    container.scrollHeight - container.clientHeight
   );
 }
 
-function markdownFencesBalanced(text: string): boolean {
-  return (text.match(/```/g) ?? []).length % 2 === 0;
+function smoothScrollToBottom(container: HTMLElement) {
+  const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+  container.scrollTo({ top: maxScroll, behavior: "smooth" });
 }
 
-// Splits the tail token into a separate animated span when fences stay balanced.
-function StreamingAssistantMarkdown(props: {
+function instantScrollUserMessageToTop(container: HTMLElement) {
+  const nodes = container.querySelectorAll('[data-message][data-role="user"]');
+  const lastUser = nodes[nodes.length - 1] as HTMLElement | undefined;
+  if (!lastUser) {
+    instantScrollToBottom(container);
+    return;
+  }
+  const cRect = container.getBoundingClientRect();
+  const mRect = lastUser.getBoundingClientRect();
+  const delta = mRect.top - cRect.top - 24;
+  container.scrollTop += delta;
+}
+
+function scrollToIncludeLastMessageMetadata(container: HTMLElement) {
+  const messageEls = container.querySelectorAll("[data-message]");
+  const lastMessage = messageEls[messageEls.length - 1] as HTMLElement | undefined;
+  if (lastMessage) {
+    const messageBottom = lastMessage.getBoundingClientRect().bottom;
+    const containerBottom = container.getBoundingClientRect().bottom;
+    if (messageBottom > containerBottom - SCROLL_PADDING_BOTTOM) {
+      const delta = messageBottom - containerBottom + SCROLL_PADDING_BOTTOM;
+      container.scrollTo({
+        top: container.scrollTop + delta,
+        behavior: "smooth",
+      });
+    }
+  } else {
+    smoothScrollToBottom(container);
+  }
+}
+
+
+function StreamingAssistantContent(props: {
   content: string;
   isStreaming: boolean;
-  lastTokenLength?: number;
   conversationId?: string | null;
+  fontSize: "small" | "medium" | "large";
 }) {
-  const { content, isStreaming, lastTokenLength, conversationId } = props;
+  const { content, isStreaming, conversationId, fontSize } = props;
+  const [displayContent, setDisplayContent] = useState(content);
+  const [settleReady, setSettleReady] = useState(!isStreaming);
+  const rafRef = useRef<number | null>(null);
 
-  if (!isStreaming) {
+  const textSizeClass =
+    fontSize === "small"
+      ? "text-sm leading-6"
+      : fontSize === "large"
+        ? "text-lg leading-8"
+        : "text-base leading-7";
+
+  useEffect(() => {
+    if (!isStreaming) {
+      if (rafRef.current != null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      setDisplayContent(content);
+      return;
+    }
+
+    if (rafRef.current != null) {
+      window.cancelAnimationFrame(rafRef.current);
+    }
+    rafRef.current = window.requestAnimationFrame(() => {
+      setDisplayContent(content);
+      rafRef.current = null;
+    });
+  }, [content, isStreaming]);
+
+  useEffect(() => {
+    if (isStreaming) {
+      setSettleReady(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setSettleReady(true);
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [isStreaming]);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current != null) {
+        window.cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
+
+  if (isStreaming || !settleReady) {
     return (
-      <AssistantMarkdown content={content} conversationId={conversationId} />
-    );
-  }
-
-  const fixedFull = fixPartialMarkdown(content);
-  const syntheticSuffix = fixedFull.slice(content.length);
-
-  // Do not split when closers were appended; settled-only would miss open ** / * / `.
-  if (syntheticSuffix.length > 0) {
-    return (
-      <div className="prism-streaming-md-wrap min-w-0">
-        <div className="token-appear" key={content.length}>
-          <AssistantMarkdown
-            content={fixedFull}
-            conversationId={conversationId}
-          />
-        </div>
+      <div className={`chat-message-content ${textSizeClass} whitespace-pre-wrap break-words ${isStreaming ? "font-mono" : ""}`}>
+        {displayContent}
+        <StreamingCursor
+          isStreaming={isStreaming}
+          hasText={displayContent.trim().length > 0}
+        />
       </div>
-    );
-  }
-
-  if (
-    !lastTokenLength ||
-    lastTokenLength <= 0 ||
-    content.length < lastTokenLength
-  ) {
-    return (
-      <AssistantMarkdown content={content} conversationId={conversationId} />
-    );
-  }
-
-  const settled = content.slice(0, -lastTokenLength);
-  const tail = content.slice(-lastTokenLength);
-
-  if (!markdownFencesBalanced(settled)) {
-    return (
-      <AssistantMarkdown content={content} conversationId={conversationId} />
     );
   }
 
   return (
-    <div className="prism-streaming-md-wrap min-w-0">
-      {settled.length > 0 && (
-        <AssistantMarkdown content={settled} conversationId={conversationId} />
-      )}
-      <div className="token-appear" key={content.length}>
-        <AssistantMarkdown content={tail} conversationId={conversationId} />
-      </div>
-    </div>
+    <motion.div
+      initial={{ opacity: 0.8 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.15 }}
+    >
+      <MarkdownRenderer
+        content={content}
+        conversationId={conversationId}
+        fontSize={fontSize}
+      />
+    </motion.div>
   );
 }
 
@@ -420,11 +302,23 @@ export function ChatWindow(props: ChatWindowProps) {
     scrollToBottomSignal = 0,
     onRegenerate,
     onEditMessage,
+    fontSize = "medium",
+    onResponseAction,
   } = props;
   const { addToast } = useToast();
-  const NEAR_BOTTOM_PX = 150;
+  const textSizeClass =
+    fontSize === "small"
+      ? "text-sm leading-6"
+      : fontSize === "large"
+        ? "text-lg leading-8"
+        : "text-base leading-7";
+  const codeSizeClass =
+    fontSize === "small"
+      ? "text-xs"
+      : fontSize === "large"
+        ? "text-base"
+        : "text-sm";
   const messagesContainerRef = useRef<HTMLElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [streamJumpVisible, setStreamJumpVisible] = useState(false);
@@ -432,6 +326,10 @@ export function ChatWindow(props: ChatWindowProps) {
     number | null
   >(null);
   const isAtBottomRef = useRef(true);
+  const isUserScrollingUpRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
+  const streamScrollRafRef = useRef<number | null>(null);
+  const prevMessagesLengthForAppendRef = useRef(0);
   const prevMessageCountRef = useRef(messages.length);
   const prevLastAssistantStreamingRef = useRef(false);
   const prevStreamLenRef = useRef(0);
@@ -476,10 +374,6 @@ export function ChatWindow(props: ChatWindowProps) {
     }
   };
 
-  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
-    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
-  };
-
   const isNearBottom = () => {
     const container = messagesContainerRef.current;
     if (!container) return true;
@@ -487,16 +381,16 @@ export function ChatWindow(props: ChatWindowProps) {
       container.scrollHeight -
         container.scrollTop -
         container.clientHeight <
-      NEAR_BOTTOM_PX
+      NEAR_BOTTOM_FOLLOW
     );
   };
 
-  const scrollToBottomIfNear = () => {
-    if (isNearBottom()) scrollToBottom("smooth");
-  };
-
   const handleScrollToBottom = () => {
-    scrollToBottom("smooth");
+    const c = messagesContainerRef.current;
+    if (!c) return;
+    isUserScrollingUpRef.current = false;
+    lastScrollTopRef.current = c.scrollTop;
+    smoothScrollToBottom(c);
     isAtBottomRef.current = true;
     setIsAtBottom(true);
     setUnreadCount(0);
@@ -517,10 +411,13 @@ export function ChatWindow(props: ChatWindowProps) {
     prevLastAssistantStreamingRef.current = false;
     prevStreamLenRef.current = 0;
     prevThreadMessageCountRef.current = 0;
+    prevMessagesLengthForAppendRef.current = 0;
+    lastScrollTopRef.current = 0;
+    isUserScrollingUpRef.current = false;
   }, [conversationId]);
 
-  // First batch of messages for this conversation: jump to bottom (no animation),
-  // except a lone new user message (let the user-message effect use smooth scroll).
+  // First batch of messages for this conversation: instant bottom (no animation),
+  // except a lone new user message (handled by append effect).
   useEffect(() => {
     if (messages.length === 0) {
       prevThreadMessageCountRef.current = 0;
@@ -532,9 +429,19 @@ export function ChatWindow(props: ChatWindowProps) {
         messages.length > 1 || last?.role === "assistant";
       prevThreadMessageCountRef.current = messages.length;
       if (shouldInstant) {
+        prevMessagesLengthForAppendRef.current = messages.length;
         window.requestAnimationFrame(() => {
-          window.requestAnimationFrame(() => scrollToBottom("instant"));
+          window.requestAnimationFrame(() => {
+            const c = messagesContainerRef.current;
+            if (c) {
+              instantScrollToBottom(c);
+              lastScrollTopRef.current = c.scrollTop;
+            }
+          });
         });
+      } else {
+        /* Single user bubble first: keep append ref at 0 so the append effect scrolls. */
+        prevMessagesLengthForAppendRef.current = 0;
       }
       return;
     }
@@ -545,7 +452,11 @@ export function ChatWindow(props: ChatWindowProps) {
     if (!scrollToBottomSignal) return;
     const id = window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        scrollToBottom("instant");
+        const c = messagesContainerRef.current;
+        if (!c) return;
+        instantScrollToBottom(c);
+        lastScrollTopRef.current = c.scrollTop;
+        isUserScrollingUpRef.current = false;
         isAtBottomRef.current = true;
         setIsAtBottom(true);
         setUnreadCount(0);
@@ -555,29 +466,81 @@ export function ChatWindow(props: ChatWindowProps) {
     return () => window.cancelAnimationFrame(id);
   }, [scrollToBottomSignal]);
 
+  // New messages: user → pin their bubble toward top (instant); assistant → smooth if following.
   useEffect(() => {
-    if (messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    if (last?.role === "user") {
-      scrollToBottom("smooth");
+    const container = messagesContainerRef.current;
+    const len = messages.length;
+    if (len === 0) {
+      prevMessagesLengthForAppendRef.current = 0;
       return;
     }
-    scrollToBottomIfNear();
-  }, [messages.length]);
+    const last = messages[len - 1];
+    const grew = len > prevMessagesLengthForAppendRef.current;
+    prevMessagesLengthForAppendRef.current = len;
+    if (!grew) return;
 
+    if (last.role === "user") {
+      isUserScrollingUpRef.current = false;
+      setStreamJumpVisible(false);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const c = messagesContainerRef.current;
+          if (c) {
+            instantScrollUserMessageToTop(c);
+            lastScrollTopRef.current = c.scrollTop;
+          }
+        });
+      });
+      return;
+    }
+
+    if (last.role === "assistant" && !isUserScrollingUpRef.current) {
+      if (isNearBottom()) {
+        window.requestAnimationFrame(() => {
+          const c = messagesContainerRef.current;
+          if (c) smoothScrollToBottom(c);
+        });
+      }
+    }
+  }, [messages]);
+
+  // Streaming tokens: one rAF per update, smooth follow only if user did not scroll up.
   useEffect(() => {
     if (streamingAssistantContent === null) {
       prevStreamLenRef.current = 0;
+      if (streamScrollRafRef.current != null) {
+        window.cancelAnimationFrame(streamScrollRafRef.current);
+        streamScrollRafRef.current = null;
+      }
       return;
     }
     const len = streamingAssistantContent.length;
     if (len === 0) return;
-    if (prevStreamLenRef.current === 0) {
-      scrollToBottom("smooth");
-    } else {
-      scrollToBottom("instant");
+    if (isUserScrollingUpRef.current) {
+      prevStreamLenRef.current = len;
+      return;
     }
+
+    if (streamScrollRafRef.current != null) {
+      window.cancelAnimationFrame(streamScrollRafRef.current);
+    }
+    streamScrollRafRef.current = window.requestAnimationFrame(() => {
+      streamScrollRafRef.current = null;
+      const c = messagesContainerRef.current;
+      if (!c || isUserScrollingUpRef.current) return;
+      const dist = c.scrollHeight - c.scrollTop - c.clientHeight;
+      if (dist > STREAM_BOTTOM_SLACK) {
+        const maxScroll = Math.max(0, c.scrollHeight - c.clientHeight);
+        c.scrollTo({ top: maxScroll, behavior: "smooth" });
+      }
+    });
     prevStreamLenRef.current = len;
+    return () => {
+      if (streamScrollRafRef.current != null) {
+        window.cancelAnimationFrame(streamScrollRafRef.current);
+        streamScrollRafRef.current = null;
+      }
+    };
   }, [streamingAssistantContent]);
 
   useEffect(() => {
@@ -588,24 +551,23 @@ export function ChatWindow(props: ChatWindowProps) {
     const streamingAssist =
       last?.role === "assistant" && Boolean(last.isStreaming);
     const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const nearBottom = remaining < NEAR_BOTTOM_PX;
+    const nearBottom = remaining < NEAR_BOTTOM_FOLLOW;
 
     if (streamingAssist) {
-      if (nearBottom) {
+      if (nearBottom && !isUserScrollingUpRef.current) {
         isAtBottomRef.current = true;
         setIsAtBottom(true);
         setUnreadCount(0);
         setStreamJumpVisible(false);
-      } else if (String(last.content ?? "").length > 0) {
+      } else if (
+        String(last.content ?? "").length > 0 &&
+        remaining > USER_SCROLL_UP_DISTANCE
+      ) {
         setStreamJumpVisible(true);
       }
       return;
     }
-
     setStreamJumpVisible(false);
-    if (isAtBottomRef.current) {
-      scrollToBottom("instant");
-    }
   }, [messages, isLoading, hasMessages]);
 
   useEffect(() => {
@@ -615,11 +577,20 @@ export function ChatWindow(props: ChatWindowProps) {
     const prev = prevLastAssistantStreamingRef.current;
 
     if (last?.role === "assistant" && prev === true && now === false) {
+      Haptics.responseComplete();
       const idx = messages.length - 1;
       setCompletionPulseIndex(idx);
       const t = window.setTimeout(() => setCompletionPulseIndex(null), 650);
+      const tMeta = window.setTimeout(() => {
+        if (isUserScrollingUpRef.current) return;
+        const c = messagesContainerRef.current;
+        if (c) scrollToIncludeLastMessageMetadata(c);
+      }, 150);
       prevLastAssistantStreamingRef.current = now;
-      return () => window.clearTimeout(t);
+      return () => {
+        window.clearTimeout(t);
+        window.clearTimeout(tMeta);
+      };
     }
 
     prevLastAssistantStreamingRef.current = now;
@@ -629,16 +600,34 @@ export function ChatWindow(props: ChatWindowProps) {
     const el = messagesContainerRef.current;
     if (!el) return;
 
-    const handleScroll = () => {
-      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const atBottom = remaining < NEAR_BOTTOM_PX;
+    const syncScrollState = (container: HTMLElement) => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+      if (
+        scrollTop < lastScrollTopRef.current &&
+        distanceFromBottom > USER_SCROLL_UP_DISTANCE
+      ) {
+        isUserScrollingUpRef.current = true;
+      }
+      if (distanceFromBottom < AT_BOTTOM_DISTANCE) {
+        isUserScrollingUpRef.current = false;
+        setStreamJumpVisible(false);
+        setUnreadCount(0);
+      }
+
+      lastScrollTopRef.current = scrollTop;
+      const atBottom = distanceFromBottom < NEAR_BOTTOM_FOLLOW;
       isAtBottomRef.current = atBottom;
       setIsAtBottom(atBottom);
-      if (atBottom) setUnreadCount(0);
+    };
+
+    const handleScroll = (e: Event) => {
+      syncScrollState(e.currentTarget as HTMLElement);
     };
 
     el.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
+    syncScrollState(el);
     return () => {
       el.removeEventListener("scroll", handleScroll);
     };
@@ -684,8 +673,8 @@ export function ChatWindow(props: ChatWindowProps) {
         const isUser = message.role === "user";
         const alignClass = isUser ? "items-end" : "items-start";
         const bubbleClass = isUser
-          ? "bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] text-white"
-          : "text-foreground";
+          ? "bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] text-white [&_*]:text-white [&_a]:text-white/80 [&_a]:underline"
+          : "text-foreground dark:text-[rgba(255,255,255,0.9)]";
 
         const baseModelId = chatMessage.model_id as ModelId | undefined;
         const routedTo = chatMessage.routed_to as ModelId | undefined;
@@ -767,6 +756,8 @@ export function ChatWindow(props: ChatWindowProps) {
             : !chatMessage.isStreaming;
 
         const setRatingForMessage = (r: 1 | -1 | null) => {
+          if (r === 1) Haptics.thumbsUp();
+          if (r === -1) Haptics.thumbsDown();
           setFeedbackRatingByKey((prev) => ({ ...prev, [messageKey]: r }));
           if (r !== -1) {
             setFeedbackInputKey((k) => (k === messageKey ? null : k));
@@ -781,8 +772,10 @@ export function ChatWindow(props: ChatWindowProps) {
         return (
           <div
             key={messageKey}
-            className={`flex w-full flex-col gap-1.5 ${alignClass} ${
-              isUser ? "prism-anim-user-message" : "prism-anim-assistant-message"
+            data-message="true"
+            data-role={isUser ? "user" : "assistant"}
+            className={`flex w-full flex-col gap-0.5 ${alignClass} ${
+              isUser ? "prism-anim-user-message justify-end" : "prism-anim-assistant-message"
             }`}
           >
             {!isUser && (
@@ -802,9 +795,27 @@ export function ChatWindow(props: ChatWindowProps) {
                 <span className="uppercase">PRISM</span>
               </div>
             )}
-            <div className="flex w-full flex-col items-start gap-1.5">
+            <div className="flex w-full flex-col items-start gap-0.5">
+              {!isUser &&
+              index === messages.length - 1 &&
+              !chatMessage.isStreaming &&
+              !isLoading &&
+              !isUserScrollingUpRef.current ? (
+                <ResponseActions
+                  messageContent={plainText}
+                  onAction={(actionId, prompt) =>
+                    onResponseAction?.(actionId, prompt, index)
+                  }
+                  isLastMessage={index === messages.length - 1}
+                  isStreaming={Boolean(chatMessage.isStreaming)}
+                />
+              ) : null}
               <div
-                className={`group/msg relative pb-9 ${isUser ? "ml-auto mr-12 w-full max-w-[62%]" : "max-w-[78%]"}`}
+                className={`group/msg relative pb-2 ${
+                  isUser
+                    ? "ml-auto w-fit min-w-0 max-w-[70%] md:max-w-[60%] self-end"
+                    : "w-full min-w-0 max-w-[85%] md:max-w-[75%] self-start"
+                }`}
                 onMouseEnter={() => enterMessageHover(messageKey)}
                 onMouseLeave={leaveMessageHover}
                 onTouchStart={() => {
@@ -830,8 +841,8 @@ export function ChatWindow(props: ChatWindowProps) {
                     : {}
                 }
                 transition={{ duration: 0.6, times: [0, 0.5, 1], ease: "easeOut" }}
-                className={`w-full rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed ${
-                  isUser ? `${bubbleClass} shadow-sm` : "bg-transparent text-foreground"
+                className={`chat-message-content w-full min-w-0 break-words rounded-2xl px-5 ${isUser ? "py-3.5" : "py-2.5"} ${textSizeClass} ${
+                  isUser ? `${bubbleClass} shadow-sm` : "bg-transparent text-foreground dark:text-[rgba(255,255,255,0.9)]"
                 }`}
               >
                 {/* Inline image for user messages that had an image attached.
@@ -914,7 +925,7 @@ export function ChatWindow(props: ChatWindowProps) {
                         }
                       }}
                       rows={1}
-                      className="w-full resize-none rounded-[12px] border border-[rgba(139,92,246,0.5)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-[15px] leading-relaxed text-white outline-none transition-[min-height] duration-200 ease-out focus:border-[rgba(139,92,246,0.85)] focus:ring-2 focus:ring-[rgba(139,92,246,0.45)]"
+                      className={`chat-message-content w-full resize-none rounded-[12px] border border-[rgba(139,92,246,0.5)] bg-[rgba(255,255,255,0.05)] px-4 py-3 ${textSizeClass} text-white outline-none transition-[min-height] duration-200 ease-out focus:border-[rgba(139,92,246,0.85)] focus:ring-2 focus:ring-[rgba(139,92,246,0.45)]`}
                     />
                     <div className="flex justify-end gap-2">
                       <button
@@ -953,14 +964,14 @@ export function ChatWindow(props: ChatWindowProps) {
                       segment.type === "text" ? (
                         <p
                           key={idx}
-                          className="whitespace-pre-wrap text-[15px] leading-[1.75]"
+                          className={`chat-message-content whitespace-pre-wrap ${textSizeClass}`}
                         >
                           {segment.value}
                         </p>
                       ) : (
                         <div
                           key={idx}
-                          className="mt-3 max-h-80 overflow-hidden rounded-md border border-border bg-background/80 text-[14px] font-mono text-foreground/90"
+                          className={`mt-3 max-h-80 overflow-hidden rounded-md border border-border bg-background/80 ${codeSizeClass} font-mono text-foreground/90`}
                         >
                           <div className="flex items-center justify-between border-b border-border/70 bg-muted/60 px-3 py-1.5 text-[11px] text-muted-foreground">
                             <span>Code</span>
@@ -1028,19 +1039,12 @@ export function ChatWindow(props: ChatWindowProps) {
                           animate={{ opacity: 1 }}
                           transition={{ duration: 0.22, ease: "easeOut" }}
                         >
-                          <StreamingAssistantMarkdown
+                          <StreamingAssistantContent
                             content={plainText}
                             isStreaming={Boolean(chatMessage.isStreaming)}
-                            lastTokenLength={chatMessage.lastTokenLength}
                             conversationId={conversationId}
+                            fontSize={fontSize}
                           />
-                          {(chatMessage.response_type === "text" ||
-                            !chatMessage.response_type) && (
-                            <StreamingCursor
-                              isStreaming={Boolean(chatMessage.isStreaming)}
-                              hasText={plainText.trim().length > 0}
-                            />
-                          )}
                         </motion.div>
                       )}
                     </div>
@@ -1127,15 +1131,15 @@ export function ChatWindow(props: ChatWindowProps) {
                         stiffness: 380,
                         damping: 28,
                       }}
-                      className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[#7c3aed]/10 bg-gradient-to-r from-[#7c3aed]/[0.06] to-[#2563eb]/[0.06] px-2 py-1 text-xs leading-snug text-muted-foreground dark:border-[#7c3aed]/15 dark:from-[#7c3aed]/[0.08] dark:to-[#2563eb]/[0.08]"
+                      className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-2 py-1 text-xs leading-snug text-[rgba(200,180,255,0.9)]"
                     >
                       <span
-                        className="mt-px shrink-0 text-[12px] leading-none text-muted-foreground"
+                        className="mt-px shrink-0 text-[12px] leading-none text-[rgba(200,180,255,0.9)]"
                         aria-hidden
                       >
                         ✦
                       </span>
-                      <span className="whitespace-pre-wrap text-muted-foreground">
+                      <span className="whitespace-pre-wrap text-[rgba(200,180,255,0.9)]">
                         Auto-routed to{" "}
                         {routedTo === "coding" ? "Coding" : "Writing"}
                         {routingReason
@@ -1148,7 +1152,7 @@ export function ChatWindow(props: ChatWindowProps) {
               )}
 
               {!isUser && searchUsed && (
-                <div className="inline-flex max-w-[80%] items-start gap-1.5 rounded-full bg-sky-950/5 px-3 py-1.5 text-[11px] leading-snug text-sky-700 dark:bg-sky-500/10 dark:text-sky-200">
+                <div className="inline-flex max-w-[80%] items-start gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">
                   <span className="mt-[1px] text-xs">🔍</span>
                   <span className="whitespace-pre-wrap">
                     Web search
@@ -1158,14 +1162,14 @@ export function ChatWindow(props: ChatWindowProps) {
               )}
 
               {!isUser && chatMessage.image_used && (
-                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full bg-violet-950/5 px-3 py-1.5 text-[11px] leading-snug text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">
+                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">
                   <Eye className="size-3 shrink-0" />
                   <span>Vision · Analyzed with GPT-4o</span>
                 </div>
               )}
 
               {!isUser && chatMessage.is_agent && (
-                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[#7c3aed]/15 bg-gradient-to-r from-[#7c3aed]/10 to-[#2563eb]/10 px-3 py-1.5 text-[11px] leading-snug text-[#7c3aed] dark:text-[#c4b5fd]">
+                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">
                   <Zap className="size-3 shrink-0" />
                   <span>
                     Agent Mode
@@ -1177,7 +1181,7 @@ export function ChatWindow(props: ChatWindowProps) {
               )}
 
               {!isUser && (chatMessage as ChatMessage & { active_template_label?: string }).active_template_label && (
-                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[#7c3aed]/20 bg-gradient-to-r from-[#7c3aed]/10 to-[#2563eb]/10 px-3 py-1.5 text-[11px] leading-snug text-[#7c3aed] dark:from-[#7c3aed]/15 dark:to-[#2563eb]/15 dark:text-[#c4b5fd]">
+                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">
                   <span>
                     {(chatMessage as ChatMessage & { active_template_label?: string }).active_template_label}
                   </span>
@@ -1204,13 +1208,22 @@ export function ChatWindow(props: ChatWindowProps) {
       feedbackDraftByKey,
       onRegenerate,
       onEditMessage,
+      onResponseAction,
     ]
   );
+
+  const lastMessageForStream = hasMessages
+    ? messages[messages.length - 1]
+    : undefined;
+  const isLastAssistantStreaming =
+    lastMessageForStream?.role === "assistant" &&
+    Boolean(lastMessageForStream.isStreaming);
 
   return (
     <section
       ref={messagesContainerRef}
       className="relative min-h-0 flex-1 overflow-y-auto px-8 pt-8 pb-48 transition-colors duration-200"
+      style={{ scrollPaddingBottom: SCROLL_PADDING_BOTTOM }}
     >
       {!hasMessages ? (
         <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
@@ -1266,9 +1279,8 @@ export function ChatWindow(props: ChatWindowProps) {
           </div>
         </div>
       ) : (
-        <div className="mx-auto flex w-full max-w-[768px] flex-col gap-6">
+        <div className="flex w-full flex-col gap-2 pb-[80px]">
           {renderedMessages}
-          <div ref={messagesEndRef} className="h-1 shrink-0" aria-hidden />
         </div>
       )}
 
@@ -1285,7 +1297,9 @@ export function ChatWindow(props: ChatWindowProps) {
           <button
             type="button"
             onClick={handleScrollToBottom}
-            className="prism-stream-new-content-btn inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] px-4 py-2 text-xs font-medium text-white shadow-lg"
+            className={`prism-stream-new-content-btn inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] via-[#2563eb] to-[#06b6d4] px-4 py-2 text-xs font-medium text-white shadow-lg ${
+              isLastAssistantStreaming ? "prism-scroll-hint-bounce" : ""
+            }`}
             aria-label="Scroll to new streamed content"
           >
             <span aria-hidden>↓</span>

@@ -74,15 +74,15 @@ const RESPONSE_STYLES: {
 
 const CATEGORY_STYLES: Record<string, string> = {
   personal:
-    "border-[#7c3aed]/30 bg-[#7c3aed]/10 text-[#7c3aed]",
+    "border-[#7c3aed]/30 bg-[#7c3aed]/10 text-[#c4b5fd]",
   technical:
-    "border-[#2563eb]/30 bg-[#2563eb]/10 text-[#2563eb]",
+    "border-[#2563eb]/30 bg-[#2563eb]/10 text-[#93c5fd]",
   projects:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
   preferences:
-    "border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400",
+    "border-orange-500/30 bg-orange-500/10 text-[#fbbf24]",
   context:
-    "border-border bg-muted/50 text-muted-foreground",
+    "border-border bg-muted/50 text-muted-foreground dark:text-white/60",
 };
 
 // Render order for category groups.
@@ -127,7 +127,7 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-4 rounded-xl border border-border bg-background/80 p-5 shadow-sm backdrop-blur-sm">
+    <div className="space-y-4 rounded-xl border border-border bg-background/80 p-5 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-[rgba(15,15,20,0.8)]">
       <div>
         <div className="flex items-center gap-2">
           {icon}
@@ -226,7 +226,7 @@ function MemoryChip({
       </div>
 
       {/* Memory text */}
-      <p className="text-xs leading-relaxed text-foreground/80">
+      <p className="text-xs leading-relaxed text-foreground/80 dark:text-white/75">
         {memory.memory}
       </p>
     </div>
