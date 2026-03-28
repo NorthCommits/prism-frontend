@@ -864,7 +864,13 @@ function LiveDemoSection() {
   /* Accumulate streaming tokens outside React state to avoid stale closures */
   const streamingRef = useRef("");
 
-  type DemoMessage = { role: "user" | "assistant"; content: string; isError?: boolean };
+  type DemoMessage = {
+    role: "user" | "assistant";
+    content: string;
+    isError?: boolean;
+    /** In-flight assistant row: same DOM node from first token through stream end. */
+    isStreaming?: boolean;
+  };
 
   const [demoMessages, setDemoMessages] = useState<DemoMessage[]>([
     { role: "user", content: "What can you help me with?" },
@@ -878,7 +884,6 @@ function LiveDemoSection() {
   const [isLoading, setIsLoading]               = useState(false);
   const [messagesRemaining, setMessagesRemaining] = useState(3);
   const [limitReached, setLimitReached]         = useState(false);
-  const [streamingContent, setStreamingContent] = useState("");
 
   const API_URL =
     process.env.NEXT_PUBLIC_API_URL || "https://prism-backend-sjhg.onrender.com";
@@ -888,7 +893,7 @@ function LiveDemoSection() {
     const el = messagesScrollRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [demoMessages, streamingContent]);
+  }, [demoMessages]);
 
   const sendMessage = async (text?: string) => {
     const messageText = (text ?? input).trim();
@@ -920,6 +925,9 @@ function LiveDemoSection() {
 
       if (!response.ok || !response.body) throw new Error("Request failed");
 
+      /* One assistant row for the whole stream — no swap to a second bubble on done. */
+      setDemoMessages((prev) => [...prev, { role: "assistant", content: "", isStreaming: true }]);
+
       const reader  = response.body.getReader();
       const decoder = new TextDecoder();
 
@@ -940,16 +948,28 @@ function LiveDemoSection() {
 
             if (data.type === "token") {
               streamingRef.current += data.content;
-              setStreamingContent(streamingRef.current);
+              const accumulated = streamingRef.current;
+              setDemoMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant" && last.isStreaming) {
+                  next[next.length - 1] = { ...last, content: accumulated };
+                }
+                return next;
+              });
             }
 
             if (data.type === "done") {
-              setDemoMessages((prev) => [
-                ...prev,
-                { role: "assistant", content: streamingRef.current },
-              ]);
+              const finalText = streamingRef.current;
               streamingRef.current = "";
-              setStreamingContent("");
+              setDemoMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant" && last.isStreaming) {
+                  next[next.length - 1] = { role: "assistant", content: finalText };
+                }
+                return next;
+              });
               setIsLoading(false);
             }
           } catch {
@@ -957,11 +977,35 @@ function LiveDemoSection() {
           }
         }
       }
+
+      /* Stream closed without explicit `done` — keep accumulated text and release loading. */
+      setDemoMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant" && last.isStreaming) {
+          next[next.length - 1] = { role: "assistant", content: last.content };
+        }
+        return next;
+      });
+      streamingRef.current = "";
+      setIsLoading(false);
     } catch {
-      setDemoMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Something went wrong. Please try again.", isError: true },
-      ]);
+      setDemoMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant" && last.isStreaming) {
+          next[next.length - 1] = {
+            role: "assistant",
+            content: "Something went wrong. Please try again.",
+            isError: true,
+          };
+          return next;
+        }
+        return [
+          ...prev,
+          { role: "assistant", content: "Something went wrong. Please try again.", isError: true },
+        ];
+      });
       setIsLoading(false);
     }
   };
@@ -1085,17 +1129,17 @@ function LiveDemoSection() {
           {/* Scrollable messages area */}
           <div
             ref={messagesScrollRef}
-            className="demo-scroll overflow-y-auto p-5"
+            className="demo-scroll flex flex-col gap-3 overflow-y-auto overflow-x-visible p-5"
             style={{ height: "320px" }}
           >
             {demoMessages.map((msg, i) => (
               <div
                 key={i}
-                className={`mb-4 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                className={`flex shrink-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 {msg.role === "user" ? (
                   <div
-                    className="max-w-[80%] px-4 py-2.5 text-[13px] leading-relaxed text-white"
+                    className="h-auto max-w-[80%] min-h-0 min-w-0 shrink-0 overflow-visible px-4 py-2.5 text-[13px] leading-relaxed text-white"
                     style={{
                       background: "linear-gradient(135deg, #8b5cf6, #06b6d4)",
                       borderRadius: "18px 18px 4px 18px",
@@ -1104,7 +1148,7 @@ function LiveDemoSection() {
                     {msg.content}
                   </div>
                 ) : (
-                  <div className="max-w-[80%]">
+                  <div className="max-w-[80%] min-w-0 shrink-0">
                     <div className="mb-1 flex items-center gap-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
                       <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">
@@ -1112,7 +1156,7 @@ function LiveDemoSection() {
                       </span>
                     </div>
                     <div
-                      className="px-4 py-2.5 text-[13px] leading-relaxed"
+                      className="min-h-fit h-auto shrink-0 overflow-visible px-4 py-2.5 text-[13px] leading-relaxed"
                       style={{
                         ...assistantBubbleStyle,
                         ...(msg.isError
@@ -1120,45 +1164,29 @@ function LiveDemoSection() {
                           : {}),
                       }}
                     >
-                      {msg.content}
+                      {msg.isStreaming && !msg.content ? (
+                        <div className="flex items-center gap-1 py-0.5">
+                          {[0, 1, 2].map((j) => (
+                            <div
+                              key={j}
+                              className="h-1.5 w-1.5 rounded-full bg-white/40"
+                              style={{ animation: `lp-bounce 1s ease-in-out ${j * 0.2}s infinite` }}
+                            />
+                          ))}
+                        </div>
+                      ) : msg.isStreaming ? (
+                        <>
+                          {msg.content}
+                          <span className="lp-cursor ml-0.5 inline-block h-3.5 w-px bg-violet-400" />
+                        </>
+                      ) : (
+                        msg.content
+                      )}
                     </div>
                   </div>
                 )}
               </div>
             ))}
-
-            {/* Streaming bubble: typing dots → token stream → blinking cursor */}
-            {isLoading && (
-              <div className="mb-4 flex justify-start">
-                <div className="max-w-[80%]">
-                  <div className="mb-1 flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">
-                      PRISM
-                    </span>
-                  </div>
-                  <div className="px-4 py-2.5 text-[13px] leading-relaxed" style={assistantBubbleStyle}>
-                    {streamingContent ? (
-                      <>
-                        {streamingContent}
-                        <span className="lp-cursor ml-0.5 inline-block h-3.5 w-px bg-violet-400" />
-                      </>
-                    ) : (
-                      /* Bouncing typing dots while waiting for first token */
-                      <div className="flex items-center gap-1 py-0.5">
-                        {[0, 1, 2].map((j) => (
-                          <div
-                            key={j}
-                            className="h-1.5 w-1.5 rounded-full bg-white/40"
-                            style={{ animation: `lp-bounce 1s ease-in-out ${j * 0.2}s infinite` }}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Input row OR rate-limit CTA */}

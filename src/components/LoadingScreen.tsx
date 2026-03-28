@@ -252,7 +252,7 @@ export function LoadingScreen({
           className="relative z-10 pb-6 pt-4 text-center text-[11px]"
           style={{ color: "rgba(255,255,255,0.2)" }}
         >
-          Prism v1.0 beta
+          Prism v1.0
         </p>
       </motion.div>
     </>

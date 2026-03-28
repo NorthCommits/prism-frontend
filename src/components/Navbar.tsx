@@ -30,12 +30,7 @@ export function Navbar() {
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-sky-500 via-violet-500 to-emerald-400 text-xs font-semibold text-white shadow-sm">
             P
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold tracking-tight">Prism</span>
-            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              beta
-            </span>
-          </div>
+          <span className="text-sm font-semibold tracking-tight">Prism</span>
         </div>
 
         {/* Right side: theme toggle */}

@@ -2675,7 +2675,7 @@ function HomeContent() {
                 )}
 
                 <div className="mt-2 border-t border-border/60 pt-3 text-[10px] text-muted-foreground">
-                  Prism v0.1.0 beta
+                  Prism v0.1.0
                 </div>
             </div>
           </div>
@@ -2893,7 +2893,7 @@ function HomeContent() {
                   className={`rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 ${
                     fontSize === "small"
                       ? "border border-purple-500/40 bg-purple-500/20 text-[rgba(200,180,255,0.95)]"
-                      : "text-white/40 hover:text-white/80"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   title="Small text"
                 >
@@ -2909,7 +2909,7 @@ function HomeContent() {
                   className={`rounded-md px-2 py-1 text-sm font-medium transition-all duration-150 ${
                     fontSize === "medium"
                       ? "border border-purple-500/40 bg-purple-500/20 text-[rgba(200,180,255,0.95)]"
-                      : "text-white/40 hover:text-white/80"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   title="Medium text"
                 >
@@ -2925,7 +2925,7 @@ function HomeContent() {
                   className={`rounded-md px-2 py-1 text-base font-medium transition-all duration-150 ${
                     fontSize === "large"
                       ? "border border-purple-500/40 bg-purple-500/20 text-[rgba(200,180,255,0.95)]"
-                      : "text-white/40 hover:text-white/80"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   title="Large text"
                 >

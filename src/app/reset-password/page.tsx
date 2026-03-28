@@ -77,12 +77,7 @@ export default function ResetPasswordPage() {
             P
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold tracking-tight">Prism</h1>
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                beta
-              </span>
-            </div>
+            <h1 className="text-lg font-semibold tracking-tight">Prism</h1>
             <p className="text-xs text-muted-foreground">Set a new password</p>
           </div>
         </div>
