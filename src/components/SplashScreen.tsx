@@ -1,111 +1,103 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 
-const SPLASH_STORAGE_KEY = "prism_splash_shown";
-const SPLASH_TOTAL_VISIBLE_MS = 4000;
-const SPLASH_FADE_MS = 500;
-
-type SplashScreenProps = {
-  onEnter?: () => void;
-};
-
-export function SplashScreen({ onEnter }: SplashScreenProps) {
-  const [isVisible, setIsVisible] = useState(false);
-  const [isFadingOut, setIsFadingOut] = useState(false);
-  const [showTitle, setShowTitle] = useState(false);
-  const [showTagline, setShowTagline] = useState(false);
-  const [taglineLeaving, setTaglineLeaving] = useState(false);
-  const [showButton, setShowButton] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const hasShown = window.sessionStorage.getItem(SPLASH_STORAGE_KEY) === "1";
-    if (hasShown) {
-      return;
-    }
-
-    setIsVisible(true);
-    setShowTitle(true);
-
-    const taglineInTimer = window.setTimeout(() => {
-      setShowTagline(true);
-    }, 500);
-
-    const taglineOutTimer = window.setTimeout(() => {
-      setTaglineLeaving(true);
-    }, 2000);
-
-    const buttonInTimer = window.setTimeout(() => {
-      setShowButton(true);
-    }, 2400);
-
-    return () => {
-      window.clearTimeout(taglineInTimer);
-      window.clearTimeout(taglineOutTimer);
-      window.clearTimeout(buttonInTimer);
-    };
-  }, []);
-
-  const handleDismissNow = () => {
-    if (typeof window === "undefined") return;
-    onEnter?.();
-    window.sessionStorage.setItem(SPLASH_STORAGE_KEY, "1");
-    setIsFadingOut(true);
-    window.setTimeout(() => {
-      setIsVisible(false);
-    }, 300);
-  };
-
-  if (!isVisible) {
-    return null;
-  }
-
-  return (
-    <div
-      className={`fixed inset-0 z-[9999] flex h-screen w-screen items-center justify-center bg-[#0a0a0f] bg-[radial-gradient(circle_at_center,_#7c3aed,_#2563eb,_#06b6d4_60%)] transition-opacity duration-500 ${
-        isFadingOut ? "opacity-0" : "opacity-100"
-      }`}
-    >
-      <div className="flex w-full max-w-xl flex-col items-center gap-8 px-6 text-center text-white">
-        <div className="space-y-4">
-          <h1
-            className={`bg-gradient-to-r from-violet-300 via-sky-200 to-cyan-200 bg-clip-text text-5xl font-bold tracking-tight text-transparent sm:text-6xl transition-all duration-600 ease-out ${
-              showTitle ? "translate-y-0 scale-100 opacity-100" : "translate-y-2 scale-95 opacity-0"
-            } animate-[prism-shimmer_2.4s_linear_infinite]`}
-          >
-            Prism
-          </h1>
-          <p
-            className={`text-base text-white/70 sm:text-lg transition-all duration-400 ease-out ${
-              showTagline && !taglineLeaving
-                ? "translate-x-0 opacity-100"
-                : taglineLeaving
-                ? "-translate-x-full opacity-0"
-                : "translate-x-2 opacity-0"
-            }`}
-          >
-            The right model. Every time.
-          </p>
-        </div>
-
-        {showButton && (
-          <button
-            type="button"
-            onClick={handleDismissNow}
-            className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/90 px-8 py-3 text-lg font-medium text-slate-900 shadow-md transition-transform transition-shadow duration-200 hover:scale-[1.03] hover:shadow-[0_0_25px_rgba(248,250,252,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          >
-            <span>Let&apos;s Chat</span>
-            <ArrowRight className="size-5" />
-          </button>
-        )}
-      </div>
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 h-1.5 bg-white/10">
-        <div className="h-full w-0 bg-gradient-to-r from-violet-400 via-sky-400 to-cyan-300 transition-[width] duration-[2500ms] ease-out [animation:prism-progress_2.5s_forwards]" />
-      </div>
-    </div>
-  );
+interface SplashScreenProps {
+  onComplete: () => void;
 }
 
+export function SplashScreen({ onComplete }: SplashScreenProps) {
+  const [phase, setPhase] = useState<"logo" | "tagline" | "exit">("logo");
+
+  useEffect(() => {
+    // phase 1: logo appears (0ms)
+    // phase 2: tagline appears (600ms)
+    // phase 3: exit begins (1600ms)
+    // phase 4: onComplete (2100ms)
+
+    const t1 = setTimeout(() => setPhase("tagline"), 600);
+    const t2 = setTimeout(() => setPhase("exit"), 1600);
+    const t3 = setTimeout(() => onComplete(), 2100);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [onComplete]);
+
+  return (
+    <AnimatePresence>
+      {phase !== "exit" ? (
+        <motion.div
+          key="splash"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.5, ease: "easeInOut" }}
+          className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black"
+        >
+          {/* Subtle background glow — static, not animated */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                "radial-gradient(ellipse 60% 50% at 50% 50%, rgba(139,92,246,0.08) 0%, transparent 70%)",
+            }}
+          />
+
+          {/* Logo */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+            className="relative z-10 flex flex-col items-center gap-5"
+          >
+            {/* Prism icon */}
+            <div
+              className="flex h-16 w-16 items-center justify-center rounded-2xl"
+              style={{
+                background: "linear-gradient(135deg, #8b5cf6, #06b6d4)",
+                boxShadow:
+                  "0 0 40px rgba(139,92,246,0.25), 0 0 80px rgba(6,182,212,0.1)",
+              }}
+            >
+              <span
+                className="font-black text-white"
+                style={{ fontSize: "28px", letterSpacing: "-1px" }}
+              >
+                P
+              </span>
+            </div>
+
+            {/* Prism wordmark */}
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.4, delay: 0.2 }}
+              className="font-bold tracking-wide text-white"
+              style={{ fontSize: "28px", letterSpacing: "0.05em" }}
+            >
+              PRISM
+            </motion.span>
+          </motion.div>
+
+          {/* Tagline — appears after logo settles */}
+          <motion.p
+            initial={{ opacity: 0, y: 6 }}
+            animate={{
+              opacity: phase === "tagline" ? 1 : 0,
+              y: phase === "tagline" ? 0 : 6,
+            }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
+            className="absolute bottom-0 left-0 right-0 pb-16 text-center text-sm uppercase text-white/30"
+            style={{ letterSpacing: "0.2em" }}
+          >
+            The right model. Every time.
+          </motion.p>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}

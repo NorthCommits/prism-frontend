@@ -11,13 +11,19 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlignLeft,
+  ArrowRight,
   BarChart2,
   BookOpen,
+  Braces,
   Brain,
+  ChevronDown,
   Code2,
   Cpu,
+  Download,
   FileText,
   FolderOpen,
+  GitBranch,
   Globe,
   Image,
   Keyboard,
@@ -93,8 +99,10 @@ import { ToastContainer, ToastProvider, pushToast } from "@/components/Toast";
 import {
   Conversation,
   SearchResult,
+  branchConversation,
   deleteConversation,
   embedAllConversations,
+  exportConversation,
   getConversations,
   getConversationMessages,
   createConversation,
@@ -279,6 +287,12 @@ function HomeContent() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement | null>(null);
+  // Export dropdown
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  // Branch
+  const [isBranching, setIsBranching] = useState(false);
 
   // Onboarding overlay — shown once after a user's first login.
   const [showOnboarding, setShowOnboarding]   = useState(false);
@@ -1055,68 +1069,57 @@ function HomeContent() {
     setInputValue("");
   };
 
-  const handleSplashEnter = () => {
-    setActiveConversationId(null);
-    setMessages([]);
-    setInputValue("");
+  const handleSplashComplete = () => {
+    try {
+      localStorage.setItem("prism_visited", "true");
+    } catch {
+      /* localStorage unavailable */
+    }
+    setShowSplash(false);
+  };
 
-    // Cinematic splash -> chat warp transition.
-    splashWarpTimeoutsRef.current.forEach((t) => window.clearTimeout(t));
-    splashWarpTimeoutsRef.current = [];
+  const handleExport = async (format: "md" | "txt" | "json") => {
+    if (!activeConversationId) return;
+    setIsExporting(true);
+    setShowExportMenu(false);
+    try {
+      await exportConversation(activeConversationId, format);
+      pushToast("Conversation exported successfully", "success");
+      Haptics.responseComplete();
+    } catch {
+      pushToast("Export failed. Please try again.", "error");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
-    setIsSplashWarping(true);
-    setIsChatWarpingIn(false);
-    setIsChatShaking(false);
-
-    // 400ms: start chat zoom-in.
-    splashWarpTimeoutsRef.current.push(
-      window.setTimeout(() => {
-        setIsChatWarpingIn(true);
-      }, 400)
-    );
-
-    // 600ms: splash overlay can stop its own zoom animation.
-    splashWarpTimeoutsRef.current.push(
-      window.setTimeout(() => {
-        setIsSplashWarping(false);
-      }, 600)
-    );
-
-    // 700ms: brief shake for landing impact.
-    splashWarpTimeoutsRef.current.push(
-      window.setTimeout(() => {
-        setIsChatShaking(true);
-        splashWarpTimeoutsRef.current.push(
-          window.setTimeout(() => {
-            setIsChatShaking(false);
-          }, 300)
-        );
-      }, 700)
-    );
-
-    // 900ms: chat spring-in animation is done (~300ms from t=400). Reset classes
-    // so the element isn't frozen in an animated state.
-    splashWarpTimeoutsRef.current.push(
-      window.setTimeout(() => {
-        setIsChatWarpingIn(false);
-      }, 900)
-    );
-
-    // 1100ms: safety cleanup — fully remove splash overlay and reset all warp
-    // states regardless of what happened above.
-    splashWarpTimeoutsRef.current.push(
-      window.setTimeout(() => {
-        try {
-          localStorage.setItem("prism_visited", "true");
-        } catch {
-          /* localStorage unavailable */
-        }
-        setShowSplash(false);
-        setIsSplashWarping(false);
-        setIsChatWarpingIn(false);
-        setIsChatShaking(false);
-      }, 1100)
-    );
+  const handleBranch = async (messageIndex: number) => {
+    if (!activeConversationId) return;
+    setIsBranching(true);
+    try {
+      const result = await branchConversation(activeConversationId, messageIndex);
+      if (!result) {
+        pushToast("Failed to create branch", "error");
+        return;
+      }
+      pushToast(`Branch created: "${result.branch_title}"`, "success");
+      Haptics.responseComplete();
+      const newConv: Conversation = {
+        id: result.branch_conversation_id,
+        title: result.branch_title,
+        model_id: "",
+        is_branch: true,
+        parent_conversation_id: activeConversationId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      setConversations((prev) => [newConv, ...prev]);
+      await openConversationById(result.branch_conversation_id, newConv);
+    } catch {
+      pushToast("Branch failed. Please try again.", "error");
+    } finally {
+      setIsBranching(false);
+    }
   };
 
   const handleOpenConversation = async (id: string) => {
@@ -1238,6 +1241,29 @@ function HomeContent() {
     }
     return () => document.removeEventListener("mousedown", handler);
   }, [isProfileOpen]);
+
+  // Close export dropdown when user clicks outside of it.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowExportMenu(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowExportMenu(false);
+    };
+    if (showExportMenu) {
+      document.addEventListener("mousedown", handler);
+      document.addEventListener("keydown", onKey);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showExportMenu]);
 
   // Debounced sidebar search — fires 300 ms after the query stops changing.
   useEffect(() => {
@@ -1951,7 +1977,12 @@ function HomeContent() {
     );
     const textBlock = (
       <div className="min-w-0 text-left">
-        <p className="line-clamp-1 text-foreground/90">{conversation.title}</p>
+        <p className="line-clamp-1 flex items-center gap-1 text-foreground/90">
+          {conversation.is_branch && (
+            <GitBranch className="size-2.5 shrink-0 text-purple-400/60" aria-hidden />
+          )}
+          {conversation.title}
+        </p>
         <p className="text-[10px] text-muted-foreground">
           {formatRelativeTime(conversation.updated_at)}
         </p>
@@ -2813,7 +2844,75 @@ function HomeContent() {
               selectedModel={selectedModel}
               onModelChange={setSelectedModel}
             />
-            <div className="flex w-32 items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-2">
+              {/* Export button — only shown when a conversation is active */}
+              {activeConversationId && (
+                <div ref={exportMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowExportMenu((v) => !v)}
+                    disabled={isExporting}
+                    aria-label="Export conversation"
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-white/40 transition-all duration-150 hover:bg-white/[0.06] hover:text-white/70 disabled:opacity-50 dark:text-white/40"
+                  >
+                    {isExporting ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Exporting…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download size={14} />
+                        <span>Export</span>
+                        <ChevronDown size={12} />
+                      </>
+                    )}
+                  </button>
+
+                  {showExportMenu && (
+                    <div
+                      className="absolute right-0 top-full z-50 mt-1.5 w-[180px] overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-950/95 shadow-xl backdrop-blur-xl"
+                      style={{
+                        animation: "export-menu-in 0.15s ease forwards",
+                      }}
+                    >
+                      <style>{`
+                        @keyframes export-menu-in {
+                          from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+                          to   { opacity: 1; transform: scale(1) translateY(0); }
+                        }
+                      `}</style>
+                      <button
+                        type="button"
+                        onClick={() => handleExport("md")}
+                        className="flex w-full items-center gap-2.5 rounded-t-xl px-3.5 py-2.5 text-[13px] text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
+                      >
+                        <FileText size={14} className="shrink-0 text-violet-400" />
+                        Markdown (.md)
+                      </button>
+                      <div className="mx-3 border-t border-white/[0.06]" />
+                      <button
+                        type="button"
+                        onClick={() => handleExport("txt")}
+                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-[13px] text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
+                      >
+                        <AlignLeft size={14} className="shrink-0 text-cyan-400" />
+                        Plain Text (.txt)
+                      </button>
+                      <div className="mx-3 border-t border-white/[0.06]" />
+                      <button
+                        type="button"
+                        onClick={() => handleExport("json")}
+                        className="flex w-full items-center gap-2.5 rounded-b-xl px-3.5 py-2.5 text-[13px] text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
+                      >
+                        <Braces size={14} className="shrink-0 text-emerald-400" />
+                        JSON (.json)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Profile avatar + dropdown */}
               <div ref={profileDropdownRef} className="relative">
                 <button
@@ -2977,6 +3076,37 @@ function HomeContent() {
           </header>
 
           <main className="flex min-h-0 flex-1 flex-col">
+            {/* Branch banner — shown when viewing a branched conversation */}
+            {activeConversationId && (() => {
+              const activeConv = conversations.find((c) => c.id === activeConversationId);
+              if (!activeConv?.is_branch) return null;
+              const parentConv = activeConv.parent_conversation_id
+                ? conversations.find((c) => c.id === activeConv.parent_conversation_id)
+                : null;
+              return (
+                <div
+                  className="flex items-center gap-2 border-b border-border px-4 py-2 text-[12px] text-muted-foreground"
+                  style={{ borderLeftWidth: "3px", borderLeftColor: "#8b5cf6", background: "rgba(139,92,246,0.05)" }}
+                >
+                  <GitBranch size={13} className="shrink-0 text-purple-400" />
+                  <span className="font-medium text-purple-400">Branched conversation</span>
+                  {parentConv && (
+                    <>
+                      <span className="text-muted-foreground/60">· from &ldquo;{parentConv.title}&rdquo;</span>
+                      <button
+                        type="button"
+                        onClick={() => openConversationById(parentConv.id, parentConv)}
+                        className="ml-auto flex cursor-pointer items-center gap-1 text-purple-400/70 transition-colors hover:text-purple-400"
+                      >
+                        View original
+                        <ArrowRight size={11} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Project context banner — shown when a project is linked */}
             {activeProject && (
               <div
@@ -3017,6 +3147,7 @@ function HomeContent() {
               fontSize={fontSize}
               onRegenerate={handleRegenerate}
               onEditMessage={handleEditMessage}
+              onBranch={isBranching ? undefined : handleBranch}
               onResponseAction={handleResponseAction}
               onQuoteReply={handleQuoteReply}
               onSuggestionClick={(text) => {
@@ -3123,20 +3254,11 @@ function HomeContent() {
         }}
         onExport={async () => {
           if (!contextMenu) return;
-          const c = contextMenu.conversation;
+          const id = contextMenu.conversation.id;
           setContextMenu(null);
           try {
-            const msgs = await getConversationMessages(c.id);
-            const blob = new Blob(
-              [JSON.stringify({ conversation: c, messages: msgs }, null, 2)],
-              { type: "application/json" }
-            );
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `prism-chat-${c.id.slice(0, 8)}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
+            await exportConversation(id, "md");
+            pushToast("Conversation exported successfully", "success");
           } catch {
             pushToast("Export failed", "error");
           }
@@ -3286,25 +3408,8 @@ function HomeContent() {
               transition={{ duration: 0.35 }}
               className="fixed inset-0 z-[10000]"
             >
-              <div
-                className="h-full w-full"
-                style={{ pointerEvents: isSplashWarping ? "none" : "auto" }}
-              >
-                <SplashScreen onEnter={handleSplashEnter} />
-                {isSplashWarping && (
-                  <div className="prism-meteor-layer" aria-hidden>
-                    {Array.from({ length: 10 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="prism-meteor-streak"
-                        style={{
-                          left: `${10 + i * 8}%`,
-                          animationDelay: `${i * 45}ms`,
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
+              <div className="h-full w-full">
+                <SplashScreen onComplete={handleSplashComplete} />
               </div>
             </motion.div>
           )}

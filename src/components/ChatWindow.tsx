@@ -50,6 +50,7 @@ type ChatWindowProps = {
   scrollToBottomSignal?: number;
   onRegenerate?: (messageIndex: number) => void;
   onEditMessage?: (messageIndex: number, newContent: string) => void;
+  onBranch?: (messageIndex: number) => void;
   fontSize?: "small" | "medium" | "large";
   onResponseAction?: (
     actionId: string,
@@ -306,6 +307,7 @@ export function ChatWindow(props: ChatWindowProps) {
     scrollToBottomSignal = 0,
     onRegenerate,
     onEditMessage,
+    onBranch,
     fontSize = "medium",
     onResponseAction,
     userVoice,
@@ -1169,6 +1171,8 @@ export function ChatWindow(props: ChatWindowProps) {
                       : undefined
                   }
                   isSpeaking={speakingMessageId === messageKey}
+                  onBranch={onBranch ? () => onBranch(index) : undefined}
+                  messageIndex={index}
                 />
               )}
               </div>

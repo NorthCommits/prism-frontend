@@ -7,6 +7,7 @@ import {
   Check,
   Copy,
   FileText,
+  GitBranch,
   Loader2,
   Pencil,
   Quote,
@@ -45,6 +46,8 @@ type MessageActionsBarProps = {
   feedbackDraft: string;
   onFeedbackDraftChange: (v: string) => void;
   onSubmitFeedback: (rating: 1 | -1, text: string) => Promise<void>;
+  onBranch?: () => void;
+  messageIndex?: number;
 };
 
 export function MessageActionsBar(props: MessageActionsBarProps) {
@@ -71,11 +74,33 @@ export function MessageActionsBar(props: MessageActionsBarProps) {
     feedbackDraft,
     onFeedbackDraftChange,
     onSubmitFeedback,
+    onBranch,
+    messageIndex,
   } = props;
 
   const [copyMsgDone, setCopyMsgDone] = useState(false);
   const [copyMdDone, setCopyMdDone] = useState(false);
+  const [branchPopupOpen, setBranchPopupOpen] = useState(false);
+  const branchPopupRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!branchPopupOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (branchPopupRef.current && !branchPopupRef.current.contains(e.target as Node)) {
+        setBranchPopupOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setBranchPopupOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [branchPopupOpen]);
 
   useEffect(() => {
     if (!feedbackInputOpen) return;
@@ -300,6 +325,77 @@ export function MessageActionsBar(props: MessageActionsBarProps) {
                       </button>
                     </>
                   )}
+                </>
+              )}
+
+              {onBranch && (
+                <>
+                  <span className={dividerClass} aria-hidden />
+                  <div className="relative">
+                    <button
+                      type="button"
+                      title="Branch from here"
+                      className={`${barBtnClass} hover:bg-purple-500/10 hover:text-purple-400`}
+                      onClick={() => setBranchPopupOpen((v) => !v)}
+                    >
+                      <GitBranch className="size-3.5" aria-hidden />
+                    </button>
+
+                    <AnimatePresence>
+                      {branchPopupOpen && (
+                        <motion.div
+                          ref={branchPopupRef}
+                          key="branch-popup"
+                          initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                          transition={{ duration: 0.15, ease: "easeOut" }}
+                          className={`absolute z-[100] w-[260px] rounded-xl border border-[rgba(139,92,246,0.3)] p-4 shadow-xl ${align === "right" ? "right-0" : "left-0"}`}
+                          style={{
+                            bottom: "calc(100% + 8px)",
+                            background: "rgba(12,10,20,0.97)",
+                            backdropFilter: "blur(12px)",
+                          }}
+                        >
+                          <div className="mb-3 flex items-center gap-2.5">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-500/20">
+                              <GitBranch className="size-3.5 text-purple-400" aria-hidden />
+                            </span>
+                            <span className="text-[14px] font-semibold text-white">Branch from here?</span>
+                          </div>
+                          <p className="mb-2 text-[12px] leading-relaxed text-white/50">
+                            Creates a new conversation with all messages up to this point. You can take it in a different direction.
+                          </p>
+                          {messageIndex !== undefined && (
+                            <p className="mb-3 text-[11px] font-medium" style={{ color: "#a78bfa" }}>
+                              {messageIndex + 1} message{messageIndex + 1 !== 1 ? "s" : ""} will be copied
+                            </p>
+                          )}
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setBranchPopupOpen(false)}
+                              className="rounded-lg px-3 py-1.5 text-[12px] text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBranchPopupOpen(false);
+                                onBranch();
+                              }}
+                              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
+                              style={{ background: "linear-gradient(135deg, #8b5cf6, #06b6d4)" }}
+                            >
+                              Branch
+                              <ArrowRight className="size-3" aria-hidden />
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </>
               )}
             </div>

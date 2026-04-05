@@ -8,6 +8,8 @@ export interface Conversation {
   title: string;
   model_id: string;
   project_id?: string | null;
+  is_branch?: boolean;
+  parent_conversation_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -236,6 +238,78 @@ export type EmbedAllConversationsResult = {
   failed?: number;
   total: number;
 };
+
+export async function branchConversation(
+  conversationId: string,
+  messageIndex: number
+): Promise<{
+  branch_conversation_id: string;
+  branch_title: string;
+  message_count: number;
+} | null> {
+  try {
+    const headers = await getAuthHeader();
+    const response = await fetch(
+      `${API_URL}/api/v1/conversations/${conversationId}/branch`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ message_index: messageIndex }),
+      }
+    );
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function getConversationBranches(
+  conversationId: string
+): Promise<Conversation[]> {
+  try {
+    const headers = await getAuthHeader();
+    const response = await fetch(
+      `${API_URL}/api/v1/conversations/${conversationId}/branches`,
+      { headers }
+    );
+    if (!response.ok) return [];
+    return response.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function exportConversation(
+  conversationId: string,
+  format: "md" | "txt" | "json"
+): Promise<void> {
+  try {
+    const headers = await getAuthHeader();
+    const response = await fetch(
+      `${API_URL}/api/v1/conversations/${conversationId}/export?format=${format}`,
+      { headers }
+    );
+    if (!response.ok) throw new Error("Export failed");
+
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : `prism_export.${format}`;
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error("Export error:", err);
+    throw err;
+  }
+}
 
 export async function embedAllConversations(): Promise<EmbedAllConversationsResult | null> {
   try {
