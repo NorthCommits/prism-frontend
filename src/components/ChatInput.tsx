@@ -19,6 +19,7 @@ import {
   ImageIcon,
   LucideProps,
   Lightbulb,
+  Mic,
   Paperclip,
   Search,
   Sparkles,
@@ -40,7 +41,7 @@ const ICON_MAP: Record<string, React.ComponentType<LucideProps>> = {
 
 import { Button } from "@/components/ui/button";
 import type { AvailableModel, ModelId, ParsedFile } from "../lib/api";
-import { parseFile } from "../lib/api";
+import { parseFile, transcribeAudio } from "../lib/api";
 import { getTemplates, Template } from "../lib/templates";
 import { getSmartSuggestions, type Suggestion } from "@/lib/history";
 import { useToast } from "@/components/Toast";
@@ -130,6 +131,15 @@ export function ChatInput({
   // When true the popup is suppressed even if the value starts with "/".
   const [slashMenuHidden, setSlashMenuHidden] = useState(false);
   const [slashHighlightIdx, setSlashHighlightIdx] = useState(0);
+
+  // Voice recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const hasMediaRecorder = typeof MediaRecorder !== "undefined";
 
   const { addToast } = useToast();
   const [historyNavActive, setHistoryNavActive] = useState(false);
@@ -249,6 +259,87 @@ export function ChatInput({
       setIsFetchingSuggestions(false);
     }
   }, [value]);
+
+  // Cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      clearInterval(recordingTimerRef.current);
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
+
+  const stopRecording = () => {
+    clearInterval(recordingTimerRef.current);
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "audio/ogg";
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        if (audioBlob.size < 1000) {
+          setIsTranscribing(false);
+          return;
+        }
+        setIsTranscribing(true);
+        Haptics.press();
+        const text = await transcribeAudio(audioBlob);
+        if (text) {
+          onChangeValue(value ? value + " " + text : text);
+          Haptics.responseComplete();
+          // Focus the textarea so user can immediately edit or send
+          window.setTimeout(() => textareaRef.current?.focus(), 0);
+        }
+        setIsTranscribing(false);
+        setRecordingDuration(0);
+      };
+
+      mediaRecorder.start(250);
+      mediaRecorderRef.current = mediaRecorder;
+      setIsRecording(true);
+      Haptics.send();
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => {
+          if (prev >= 60) {
+            stopRecording();
+            return 0;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+    } catch (err: unknown) {
+      const error = err as { name?: string };
+      if (error.name === "NotAllowedError") {
+        addToast("Microphone access denied", "error");
+      }
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
 
   function dismissSuggestions() {
     setShowSuggestions(false);
@@ -395,6 +486,25 @@ export function ChatInput({
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleSubmit();
+    }
+
+    // Space held on empty input → start recording (walkie-talkie feel)
+    if (
+      event.key === " " &&
+      !event.repeat &&
+      value === "" &&
+      !isLoading &&
+      hasMediaRecorder
+    ) {
+      event.preventDefault();
+      startRecording();
+    }
+  };
+
+  const handleKeyUp = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === " " && isRecording) {
+      event.preventDefault();
+      stopRecording();
     }
   };
 
@@ -697,6 +807,44 @@ export function ChatInput({
             </div>
           )}
 
+          {/* Recording indicator chip */}
+          <AnimatePresence>
+            {isRecording && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                className="mb-2 inline-flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-sm text-red-400"
+              >
+                <div className="relative h-2 w-2">
+                  <div className="h-2 w-2 rounded-full bg-red-500" />
+                  <div className="absolute inset-0 h-2 w-2 animate-ping rounded-full bg-red-500" />
+                </div>
+                Recording
+                {recordingDuration > 0 && (
+                  <span className="text-xs text-red-300/70">{recordingDuration}s</span>
+                )}
+                <span className="text-xs text-red-300/50">Tap mic to stop</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearInterval(recordingTimerRef.current);
+                    if (mediaRecorderRef.current?.state === "recording") {
+                      mediaRecorderRef.current.stop();
+                    }
+                    audioChunksRef.current = [];
+                    setIsRecording(false);
+                    setIsTranscribing(false);
+                    setRecordingDuration(0);
+                  }}
+                  className="ml-1 text-red-400/50 transition-colors hover:text-red-400"
+                >
+                  ✕
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <AnimatePresence initial={false}>
             {showSuggestions &&
               suggestions.length > 0 &&
@@ -830,11 +978,40 @@ export function ChatInput({
                 />
               )}
             </div>
+
+            {/* Mic button */}
+            {hasMediaRecorder && (
+              <motion.button
+                type="button"
+                onClick={toggleRecording}
+                disabled={isTranscribing || isLoading}
+                whileTap={{ scale: 0.9 }}
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent transition-all duration-200 ${
+                  isRecording
+                    ? "border-red-500/40 bg-red-500/20 text-red-400"
+                    : "text-muted-foreground hover:border-border hover:bg-background/60"
+                } ${isTranscribing ? "cursor-not-allowed opacity-50" : ""}`}
+                title={isRecording ? "Stop recording" : "Voice message (or hold Space)"}
+              >
+                {isTranscribing ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-purple-400" />
+                ) : isRecording ? (
+                  <div className="relative">
+                    <div className="h-3 w-3 rounded-full bg-red-500" />
+                    <div className="absolute inset-0 h-3 w-3 animate-ping rounded-full bg-red-500 opacity-75" />
+                  </div>
+                ) : (
+                  <Mic className="size-4" />
+                )}
+              </motion.button>
+            )}
+
           <textarea
             ref={textareaRef}
             value={value}
             onChange={(event) => handleInputChange(event.target.value)}
             onKeyDown={handleKeyDown}
+            onKeyUp={handleKeyUp}
             onBlur={() =>
               // Short delay so onMouseDown on popup rows fires before blur hides the menu.
               window.setTimeout(() => setSlashMenuHidden(true), 150)

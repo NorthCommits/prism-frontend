@@ -30,6 +30,17 @@ import {
 import { ProductivityDashboard } from "@/components/ProductivityDashboard";
 import { ToastContainer, ToastProvider, pushToast } from "@/components/Toast";
 
+// ─── Voice option definitions ─────────────────────────────────────────────────
+
+const VOICE_OPTIONS: { id: string; label: string; description: string }[] = [
+  { id: "alloy", label: "Alloy", description: "Neutral and balanced" },
+  { id: "echo", label: "Echo", description: "Deep and authoritative" },
+  { id: "fable", label: "Fable", description: "Warm and storytelling" },
+  { id: "onyx", label: "Onyx", description: "Strong and confident" },
+  { id: "nova", label: "Nova", description: "Energetic and clear" },
+  { id: "shimmer", label: "Shimmer", description: "Soft and expressive" },
+];
+
 // ─── Response-style option definitions ───────────────────────────────────────
 
 const RESPONSE_STYLES: {
@@ -252,6 +263,7 @@ export default function ProfilePage() {
     about_you: "",
     custom_instructions: "",
     response_style: "balanced",
+    voice: "nova",
   });
 
   // Snapshot of the last persisted state to detect unsaved changes.
@@ -293,9 +305,14 @@ export default function ProfilePage() {
           about_you: data.about_you ?? "",
           custom_instructions: data.custom_instructions ?? "",
           response_style: data.response_style ?? "balanced",
+          voice: data.voice ?? "nova",
         };
         setProfile(populated);
         setSavedProfile(populated);
+        // Keep localStorage in sync for ChatWindow to read immediately
+        if (populated.voice) {
+          localStorage.setItem("prism_voice", populated.voice);
+        }
       })
       .catch(() => {
         const defaults: UserProfile = {
@@ -303,6 +320,7 @@ export default function ProfilePage() {
           about_you: "",
           custom_instructions: "",
           response_style: "balanced",
+          voice: "nova",
         };
         setProfile(defaults);
         setSavedProfile(defaults);
@@ -366,9 +384,13 @@ export default function ProfilePage() {
         about_you: updated.about_you ?? "",
         custom_instructions: updated.custom_instructions ?? "",
         response_style: updated.response_style ?? "balanced",
+        voice: updated.voice ?? "nova",
       };
       setSavedProfile(normalised);
       setProfile(normalised);
+      if (normalised.voice) {
+        localStorage.setItem("prism_voice", normalised.voice);
+      }
       setIsSaved(true);
       pushToast("Profile saved successfully", "success");
 
@@ -639,7 +661,50 @@ export default function ProfilePage() {
               )}
             </SectionCard>
 
-            {/* ── E. What Prism Remembers ───────────────────────────────── */}
+            {/* ── E. Voice Output ──────────────────────────────────────── */}
+            <SectionCard
+              title="Voice Output"
+              subtitle="Choose Prism's speaking voice"
+            >
+              {isLoading ? (
+                <div className="grid grid-cols-2 gap-2.5">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="h-[64px] animate-pulse rounded-lg bg-muted/60" />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                  {VOICE_OPTIONS.map(({ id, label, description }) => {
+                    const isSelected = (profile.voice ?? "nova") === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => updateField("voice", id)}
+                        className={`cursor-pointer rounded-lg border p-3 text-left transition-all duration-150 hover:scale-[1.02] active:scale-[0.98] ${
+                          isSelected
+                            ? "border-[#7c3aed] bg-[#7c3aed]/10 ring-1 ring-[#7c3aed]/40"
+                            : "border-border hover:border-[#7c3aed]/40 hover:bg-muted/40"
+                        }`}
+                      >
+                        <p
+                          className={`text-xs font-medium ${
+                            isSelected ? "text-[#7c3aed]" : "text-foreground"
+                          }`}
+                        >
+                          {label}
+                        </p>
+                        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                          {description}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </SectionCard>
+
+            {/* ── F. What Prism Remembers ───────────────────────────────── */}
             <SectionCard
               title="What Prism Remembers"
               icon={<Brain className="size-4 text-[#7c3aed]" />}
@@ -710,7 +775,7 @@ export default function ProfilePage() {
               )}
             </SectionCard>
 
-            {/* ── F. Save button ────────────────────────────────────────── */}
+            {/* ── G. Save button ────────────────────────────────────────── */}
             <button
               type="button"
               disabled={isSaving || isLoading}

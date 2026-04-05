@@ -235,6 +235,10 @@ function HomeContent() {
     const stored = window.localStorage.getItem("prism_font_size");
     return stored === "small" || stored === "large" ? stored : "medium";
   });
+  const [userVoice, setUserVoice] = useState<string>(() => {
+    if (typeof window === "undefined") return "nova";
+    return window.localStorage.getItem("prism_voice") ?? "nova";
+  });
   const [inputValue, setInputValue] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
@@ -328,6 +332,16 @@ function HomeContent() {
     const t = window.setTimeout(() => setIsThemeRotating(false), 400);
     return () => window.clearTimeout(t);
   }, [isDarkTheme]);
+  // Re-sync voice preference when the user returns from the profile page
+  useEffect(() => {
+    const sync = () => {
+      const stored = localStorage.getItem("prism_voice");
+      if (stored) setUserVoice(stored);
+    };
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const conversationParam = searchParams.get("conversation");
@@ -3009,6 +3023,7 @@ function HomeContent() {
                 setInputValue(text);
                 handleSend(text);
               }}
+              userVoice={userVoice}
             />
           </main>
         </div>

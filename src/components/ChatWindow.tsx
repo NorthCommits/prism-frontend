@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -26,6 +27,7 @@ import {
 import type { AvailableModel, ChatMessage, ModelId } from "../lib/api";
 import { MessageActionsBar } from "@/components/MessageActionsBar";
 import { submitFeedback } from "@/lib/feedback";
+import { createClient } from "@/lib/supabase";
 import { PlotRenderer } from "@/components/PlotRenderer";
 import { ImageRenderer } from "@/components/ImageRenderer";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
@@ -54,6 +56,8 @@ type ChatWindowProps = {
     prompt: string,
     messageIndex: number
   ) => void;
+  /** Preferred TTS voice from the user's profile settings. */
+  userVoice?: string;
 };
 
 // Basic parser to split plain text and fenced code blocks for readable display.
@@ -304,6 +308,7 @@ export function ChatWindow(props: ChatWindowProps) {
     onEditMessage,
     fontSize = "medium",
     onResponseAction,
+    userVoice,
   } = props;
   const { addToast } = useToast();
   const textSizeClass =
@@ -347,6 +352,59 @@ export function ChatWindow(props: ChatWindowProps) {
   const [editingUserKey, setEditingUserKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleSpeak = useCallback(async (messageId: string, content: string) => {
+    if (speakingMessageId === messageId) {
+      currentAudioRef.current?.pause();
+      currentAudioRef.current = null;
+      setSpeakingMessageId(null);
+      return;
+    }
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    setSpeakingMessageId(messageId);
+    Haptics.tap();
+    try {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setSpeakingMessageId(null); return; }
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/voice/speak`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ text: content, voice: userVoice || "nova", speed: 1.0 }),
+        }
+      );
+      if (!response.ok) { setSpeakingMessageId(null); return; }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      currentAudioRef.current = audio;
+      audio.onended = () => {
+        setSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+        currentAudioRef.current = null;
+      };
+      audio.onerror = () => {
+        setSpeakingMessageId(null);
+        currentAudioRef.current = null;
+      };
+      await audio.play();
+    } catch {
+      setSpeakingMessageId(null);
+    }
+  }, [speakingMessageId, userVoice]);
 
   const clearHoverLeaveTimer = () => {
     if (hoverLeaveTimerRef.current != null) {
@@ -1105,6 +1163,12 @@ export function ChatWindow(props: ChatWindowProps) {
                     }))
                   }
                   onSubmitFeedback={submitBarFeedback}
+                  onSpeak={
+                    !isUser
+                      ? () => handleSpeak(messageKey, plainText)
+                      : undefined
+                  }
+                  isSpeaking={speakingMessageId === messageKey}
                 />
               )}
               </div>
@@ -1209,6 +1273,8 @@ export function ChatWindow(props: ChatWindowProps) {
       onRegenerate,
       onEditMessage,
       onResponseAction,
+      speakingMessageId,
+      handleSpeak,
     ]
   );
 

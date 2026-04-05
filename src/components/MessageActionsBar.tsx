@@ -13,6 +13,7 @@ import {
   RefreshCw,
   ThumbsDown,
   ThumbsUp,
+  Volume2,
 } from "lucide-react";
 
 const barBtnClass =
@@ -33,6 +34,8 @@ type MessageActionsBarProps = {
   onRegenerate?: () => void;
   onEdit?: () => void;
   onQuote?: () => void;
+  onSpeak?: () => void;
+  isSpeaking?: boolean;
   showRegenerateSpinner?: boolean;
   conversationId: string | null;
   feedbackRating: 1 | -1 | null;
@@ -57,6 +60,8 @@ export function MessageActionsBar(props: MessageActionsBarProps) {
     onRegenerate,
     onEdit,
     onQuote,
+    onSpeak,
+    isSpeaking,
     showRegenerateSpinner,
     conversationId,
     feedbackRating,
@@ -262,6 +267,36 @@ export function MessageActionsBar(props: MessageActionsBarProps) {
                         onClick={onQuote}
                       >
                         <Quote className="size-3.5" aria-hidden />
+                      </button>
+                    </>
+                  )}
+                  {onSpeak && (
+                    <>
+                      <span className={dividerClass} aria-hidden />
+                      <button
+                        type="button"
+                        title={isSpeaking ? "Stop speaking" : "Read aloud"}
+                        className={`${barBtnClass} ${isSpeaking ? "text-purple-400 hover:text-purple-300" : ""}`}
+                        onClick={onSpeak}
+                      >
+                        {isSpeaking ? (
+                          <div className="flex h-3.5 items-end gap-[2px]">
+                            {[0, 1, 2].map((i) => (
+                              <motion.div
+                                key={i}
+                                className="w-[2px] rounded-full bg-purple-400"
+                                animate={{ height: ["3px", "10px", "3px"] }}
+                                transition={{
+                                  duration: 0.8,
+                                  repeat: Infinity,
+                                  delay: i * 0.15,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <Volume2 className="size-3.5" aria-hidden />
+                        )}
                       </button>
                     </>
                   )}

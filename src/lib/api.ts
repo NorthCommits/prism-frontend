@@ -1,3 +1,5 @@
+import { createClient } from "./supabase";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type ModelId = "coding" | "writing" | "auto";
@@ -330,6 +332,32 @@ export async function sendMessageStream(
     }
   } catch (err) {
     onError((err as Error)?.message || "Something went wrong");
+  }
+}
+
+export async function transcribeAudio(audioBlob: Blob): Promise<string> {
+  try {
+    const supabase = createClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) return "";
+
+    const formData = new FormData();
+    formData.append("file", audioBlob, "audio.webm");
+
+    const response = await fetch(`${API_URL}/api/v1/voice/transcribe`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      body: formData,
+    });
+
+    if (!response.ok) return "";
+    const data = await response.json();
+    return data.text || "";
+  } catch (err) {
+    console.error("Transcription error:", err);
+    return "";
   }
 }
 

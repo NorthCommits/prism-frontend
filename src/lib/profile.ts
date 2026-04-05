@@ -15,6 +15,7 @@ export interface UserProfile {
   custom_instructions?: string;
   response_style?: ResponseStyle;
   onboarding_completed?: boolean;
+  voice?: string;
 }
 
 // Attach the Supabase JWT so the backend can identify the user.
