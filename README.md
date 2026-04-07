@@ -35,15 +35,6 @@ Prism is an open-source AI copilot that routes every message to the most capable
 - **AI Response Actions** — Quick action pills after every response: Continue, Make shorter, Make longer, Simplify, Try differently, Add examples, Use bullets
 - **Message Timestamps** — Hover any message to see the exact time it was sent
 - **Reaction Animations** — Confetti on first message, celebration milestone at 100 messages
-- **Conversation Export** — Download any conversation as Markdown, plain text, or JSON
-- **Conversation Branching** — Branch from any message to explore a different direction, like Git for conversations
-
-### Voice
-- **Voice Input** — Hold the mic button or press Space to record, Prism transcribes using OpenAI Whisper
-- **Real-Time Transcription** — Spoken words appear in the input instantly, ready to edit or send
-- **Text to Speech** — Speaker button on every assistant message reads the response aloud
-- **Six Premium Voices** — Choose from Alloy, Echo, Fable, Onyx, Nova, and Shimmer in profile settings
-- **Works Across Languages** — Whisper handles transcription in any language automatically
 
 ### Input
 - **File Upload** — Attach PDF, DOCX, CSV, XLSX, Python, JavaScript, TypeScript, Markdown, and plain text files
@@ -72,7 +63,6 @@ Prism is an open-source AI copilot that routes every message to the most capable
 - **Conversation Search** — Search titles and message content with instant results and snippets
 - **Conversation Preview** — Hover any sidebar item to see the last message in a floating popup
 - **Dynamic Icons** — Sidebar icons adapt to the topic of each conversation
-- **Branch Indicator** — Branched conversations show a small branch icon prefix in the sidebar
 
 ### Projects
 - **Project Workspaces** — Create projects with names, colors, descriptions, and custom instructions
@@ -86,7 +76,6 @@ Prism is an open-source AI copilot that routes every message to the most capable
 - **Productivity Dashboard** — Tracks conversations, average scores, time saved, category breakdown, top topics, and daily chart
 - **Weekly Report Card** — Automatic summary of your most productive week metrics
 - **User Profile** — Set your name, background, custom instructions, and preferred response style
-- **Voice Preference** — Choose your preferred TTS voice from six options, saved to your profile
 - **Cross-Conversation Memory** — View, manage, and delete memories Prism has extracted across sessions
 - **Onboarding Flow** — A four-step guided setup for new users that configures name, expertise, and response style
 - **Font Size Control** — Switch between Small, Medium, and Large text in the navbar, saved to localStorage
@@ -123,10 +112,7 @@ Prism is an open-source AI copilot that routes every message to the most capable
 | **remark-gfm** | GitHub Flavored Markdown support |
 | **react-syntax-highlighter** | Code block syntax highlighting |
 | **recharts** | Productivity dashboard charts |
-| **@dnd-kit/core** | Drag to reorder conversations |
-| **@dnd-kit/sortable** | Sortable list primitives for sidebar |
-| **Web Speech API** | Browser-native fallback for voice input |
-| **MediaRecorder API** | Audio capture for Whisper transcription |
+| **@dnd-kit** | Drag to reorder conversations |
 | **Lenis** | Smooth scroll on landing page |
 | **lucide-react** | Icon library |
 | **next-themes** | Dark and light mode |
@@ -194,12 +180,12 @@ frontend/
 │   │       └── page.tsx               # Public landing page (13 sections)
 │   ├── components/
 │   │   ├── LoadingScreen.tsx          # Cinematic loading screen for app init
-│   │   ├── SplashScreen.tsx           # First-visit clean fade-in logo animation
+│   │   ├── SplashScreen.tsx           # First-visit meteor animation
 │   │   ├── Onboarding.tsx             # Four-step new user onboarding flow
 │   │   ├── Navbar.tsx                 # Top bar, model selector, font size, profile
 │   │   ├── ModelToggle.tsx            # Auto / Coding / Writing selector
 │   │   ├── ChatWindow.tsx             # Message list, streaming, markdown, actions
-│   │   ├── ChatInput.tsx              # Input bar, file upload, image, voice, slash commands, suggestions
+│   │   ├── ChatInput.tsx              # Input bar, file upload, image, slash commands, suggestions
 │   │   ├── MarkdownRenderer.tsx       # Settled message markdown with all overrides
 │   │   ├── CodeBlock.tsx              # Code blocks with run, copy, line numbers, expand
 │   │   ├── ResponseActions.tsx        # Quick action pills after each response
@@ -211,10 +197,10 @@ frontend/
 │   │   ├── ConversationPreview.tsx    # Hover preview popup for sidebar items
 │   │   ├── ProjectPicker.tsx          # Project link popup in chat input
 │   │   ├── BottomNav.tsx              # Mobile fixed bottom navigation bar
-│   │   └── Toast.tsx                  # Stacked toast notifications with progress and undo
+│   │   └── Toast.tsx                 # Stacked toast notifications with progress and undo
 │   └── lib/
-│       ├── api.ts                     # sendMessageStream, parseFile, transcribeAudio, speakText
-│       ├── history.ts                 # Conversation CRUD, search, suggestions, export, branch
+│       ├── api.ts                     # sendMessageStream, parseFile
+│       ├── history.ts                 # Conversation and message CRUD, search, suggestions
 │       ├── profile.ts                 # Profile, memory, scores, onboarding API calls
 │       ├── projects.ts                # Project CRUD, file upload, conversation linking
 │       ├── feedback.ts                # submitFeedback
@@ -266,8 +252,7 @@ When the app initializes, it runs through a sequenced loading screen:
 ```
 App mounts
      │
-     ├── First ever visit? → Clean fade-in logo animation (2s)
-     │   Logo scales in, tagline appears, fades out gracefully
+     ├── First ever visit? → Splash / meteor animation (2-3s)
      │
      ▼
 Loading screen appears
@@ -318,50 +303,12 @@ This matches how Claude and ChatGPT handle streaming. No re-parsing on every tok
 
 ---
 
-## Voice Architecture
-
-Prism uses OpenAI Whisper for transcription and OpenAI TTS for speech output:
-
-```
-User presses mic button (or holds Space)
-     │
-     ▼
-MediaRecorder captures audio (webm format)
-     │
-     ▼
-Audio blob sent to POST /api/v1/voice/transcribe
-     │
-     ▼
-Backend converts webm → wav via FFmpeg
-Whisper model transcribes to text
-     │
-     ▼
-Transcribed text appears in chat input
-User edits or sends immediately
-```
-
-For TTS, clicking the speaker button on any assistant message:
-```
-POST /api/v1/voice/speak
-  Body: { text, voice, speed }
-     │
-     ▼
-OpenAI TTS streams MP3 audio
-     │
-     ▼
-Audio plays in browser via Web Audio API
-Animated bars show while playing
-Click again to stop
-```
-
----
-
 ## Smart Context Suggestions
 
 As the user types, Prism queries the backend for semantically related past conversations:
 
 ```
-User types 4+ characters
+User types 3+ characters
      │
      ▼ (150ms debounce)
 POST /api/v1/suggestions
@@ -377,51 +324,6 @@ Click → loads that conversation inline
 ```
 
 Embeddings are generated automatically every 4th message and bulk-generated on first load.
-
----
-
-## Conversation Branching
-
-Branch any conversation from any message point, like Git branches for AI chats:
-
-```
-User hovers a message → clicks GitBranch icon
-     │
-     ▼
-Confirmation popup shows message count to be copied
-     │
-     ▼
-POST /api/v1/conversations/{id}/branch
-  Body: { message_index: N }
-     │
-     ▼
-Backend creates new conversation
-Copies all messages up to branch point
-Sets parent_conversation_id reference
-     │
-     ▼
-New branch conversation opens automatically
-User takes it in a different direction
-Original conversation unchanged
-```
-
-Branch conversations are marked with a branch icon in the sidebar and show a banner indicating which conversation they were branched from.
-
----
-
-## Conversation Export
-
-Export any conversation in three formats:
-
-```
-GET /api/v1/conversations/{id}/export?format=md
-GET /api/v1/conversations/{id}/export?format=txt
-GET /api/v1/conversations/{id}/export?format=json
-```
-
-- **Markdown** — Full formatting preserved, routing metadata included, ready for Obsidian or Notion
-- **Plain text** — Clean readable format, markdown stripped, ideal for sharing or printing
-- **JSON** — Complete structured data including all metadata, for developers and integrations
 
 ---
 

@@ -228,6 +228,41 @@ function formatRelativeTime(isoDate: string): string {
   return `${diffDays}d ago`;
 }
 
+function groupConversationsByDate(
+  convs: Conversation[]
+): { label: string; items: Conversation[] }[] {
+  const now = new Date();
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const last7 = new Date(today);
+  last7.setDate(last7.getDate() - 7);
+  const last30 = new Date(today);
+  last30.setDate(last30.getDate() - 30);
+
+  const groups: Record<string, Conversation[]> = {
+    "Today": [],
+    "Yesterday": [],
+    "Last 7 Days": [],
+    "Last 30 Days": [],
+    "Older": [],
+  };
+
+  for (const conv of convs) {
+    const updated = new Date(conv.updated_at);
+    if (updated >= today)           groups["Today"].push(conv);
+    else if (updated >= yesterday)  groups["Yesterday"].push(conv);
+    else if (updated >= last7)      groups["Last 7 Days"].push(conv);
+    else if (updated >= last30)     groups["Last 30 Days"].push(conv);
+    else                            groups["Older"].push(conv);
+  }
+
+  return Object.entries(groups)
+    .filter(([, items]) => items.length > 0)
+    .map(([label, items]) => ({ label, items }));
+}
+
 function HomeContent() {
   type UserLike = { id?: string; email?: string | null };
   type FontSize = "small" | "medium" | "large";
@@ -277,6 +312,7 @@ function HomeContent() {
   const [isSplashWarping, setIsSplashWarping] = useState(false);
   const [isChatWarpingIn, setIsChatWarpingIn] = useState(false);
   const [isChatShaking, setIsChatShaking] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   // Agent-mode progress state — reset on every new message send.
   const [isAgentMode, setIsAgentMode] = useState(false);
   const [agentSteps, setAgentSteps] = useState<string[]>([]);
@@ -1091,6 +1127,15 @@ function HomeContent() {
     } finally {
       setIsExporting(false);
     }
+  };
+
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
   };
 
   const handleBranch = async (messageIndex: number) => {
@@ -2436,59 +2481,101 @@ function HomeContent() {
                                 )}
                                 strategy={verticalListSortingStrategy}
                               >
-                                {unpinnedOrderedConversations.map(
-                                  (conversation) => {
-                                    const {
-                                      animClass,
-                                      rowSurface,
-                                      iconSpan,
-                                      textBlock,
-                                    } = getConversationRowChrome(conversation);
-                                    return (
+                                {groupConversationsByDate(unpinnedOrderedConversations).map(
+                                  ({ label, items }) => (
+                                    <div key={label}>
+                                      {/* Group header */}
                                       <div
-                                        key={conversation.id}
-                                        onMouseEnter={(e) =>
-                                          handleConversationHoverStart(
-                                            conversation.id,
-                                            e.currentTarget.getBoundingClientRect()
-                                          )
-                                        }
-                                        onMouseLeave={handleConversationHoverEnd}
+                                        className="mt-3 flex cursor-pointer select-none items-center justify-between px-2 py-1 first:mt-1 group/grp"
+                                        onClick={() => toggleGroup(label)}
                                       >
-                                        <SortableDesktopConversationRow
-                                          id={conversation.id}
-                                          animClass={`group ${animClass}`}
-                                          rowSurface={rowSurface}
-                                          topicIcon={iconSpan}
-                                          textBlock={textBlock}
-                                          bulkSelectMode={bulkSelectMode}
-                                          isSelected={bulkSelectedIds.has(
-                                            conversation.id
-                                          )}
-                                          onToggleSelected={() =>
-                                            toggleConversationBulkSelect(
-                                              conversation.id
-                                            )
-                                          }
-                                          onBulkLongPress={() =>
-                                            enterBulkViaLongPress(
-                                              conversation.id
-                                            )
-                                          }
-                                          onOpen={() =>
-                                            void handleOpenConversation(
-                                              conversation.id
-                                            )
-                                          }
-                                          onDelete={() =>
-                                            handleDeleteConversation(
-                                              conversation.id
-                                            )
-                                          }
-                                        />
+                                        <div className="flex items-center gap-1.5">
+                                          <motion.div
+                                            animate={{ rotate: collapsedGroups.has(label) ? -90 : 0 }}
+                                            transition={{ duration: 0.15 }}
+                                          >
+                                            <ChevronDown
+                                              size={10}
+                                              className="text-muted-foreground/50 transition-colors group-hover/grp:text-muted-foreground"
+                                            />
+                                          </motion.div>
+                                          <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 transition-colors group-hover/grp:text-muted-foreground">
+                                            {label}
+                                          </span>
+                                        </div>
+                                        <span className="text-[10px] text-muted-foreground/40">
+                                          {items.length}
+                                        </span>
                                       </div>
-                                    );
-                                  }
+
+                                      {/* Group items */}
+                                      <AnimatePresence initial={false}>
+                                        {!collapsedGroups.has(label) && (
+                                          <motion.div
+                                            key={label + "-content"}
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: "auto", opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            transition={{ duration: 0.2, ease: "easeOut" }}
+                                            style={{ overflow: "hidden" }}
+                                          >
+                                            {items.map((conversation) => {
+                                              const {
+                                                animClass,
+                                                rowSurface,
+                                                iconSpan,
+                                                textBlock,
+                                              } = getConversationRowChrome(conversation);
+                                              return (
+                                                <div
+                                                  key={conversation.id}
+                                                  onMouseEnter={(e) =>
+                                                    handleConversationHoverStart(
+                                                      conversation.id,
+                                                      e.currentTarget.getBoundingClientRect()
+                                                    )
+                                                  }
+                                                  onMouseLeave={handleConversationHoverEnd}
+                                                >
+                                                  <SortableDesktopConversationRow
+                                                    id={conversation.id}
+                                                    animClass={`group ${animClass}`}
+                                                    rowSurface={rowSurface}
+                                                    topicIcon={iconSpan}
+                                                    textBlock={textBlock}
+                                                    bulkSelectMode={bulkSelectMode}
+                                                    isSelected={bulkSelectedIds.has(
+                                                      conversation.id
+                                                    )}
+                                                    onToggleSelected={() =>
+                                                      toggleConversationBulkSelect(
+                                                        conversation.id
+                                                      )
+                                                    }
+                                                    onBulkLongPress={() =>
+                                                      enterBulkViaLongPress(
+                                                        conversation.id
+                                                      )
+                                                    }
+                                                    onOpen={() =>
+                                                      void handleOpenConversation(
+                                                        conversation.id
+                                                      )
+                                                    }
+                                                    onDelete={() =>
+                                                      handleDeleteConversation(
+                                                        conversation.id
+                                                      )
+                                                    }
+                                                  />
+                                                </div>
+                                              );
+                                            })}
+                                          </motion.div>
+                                        )}
+                                      </AnimatePresence>
+                                    </div>
+                                  )
                                 )}
                               </SortableContext>
                               <DragOverlay>
@@ -2519,82 +2606,113 @@ function HomeContent() {
                             </DndContext>
                           </>
                         ) : (
-                          orderedConversations.map((conversation) => {
-                            const { animClass, rowSurface, iconSpan, textBlock } =
-                              getConversationRowChrome(conversation);
-                            return (
-                              <MobileConversationRow
-                                key={conversation.id}
-                                className={`group ${animClass}`}
-                                conversationId={conversation.id}
-                                swipeOpenId={swipeOpenConversationId}
-                                onSwipeOpenChange={setSwipeOpenConversationId}
-                                onOpen={() => {
-                                  setSwipeOpenConversationId(null);
-                                  void handleOpenConversation(conversation.id);
-                                }}
-                                onDeletePress={() =>
-                                  requestDeleteConversation(conversation.id)
-                                }
-                                onLongPress={(rect) =>
-                                  void openConversationContextMenu(
-                                    conversation,
-                                    rect
-                                  )
-                                }
-                              >
-                                <div
-                                  className={`relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface}`}
+                          <>
+                            {/* Pinned — flat, no group header */}
+                            {pinnedConversations.map((conversation) => {
+                              const { animClass, rowSurface, iconSpan, textBlock } =
+                                getConversationRowChrome(conversation);
+                              return (
+                                <MobileConversationRow
+                                  key={conversation.id}
+                                  className={`group ${animClass}`}
+                                  conversationId={conversation.id}
+                                  swipeOpenId={swipeOpenConversationId}
+                                  onSwipeOpenChange={setSwipeOpenConversationId}
+                                  onOpen={() => {
+                                    setSwipeOpenConversationId(null);
+                                    void handleOpenConversation(conversation.id);
+                                  }}
+                                  onDeletePress={() =>
+                                    requestDeleteConversation(conversation.id)
+                                  }
+                                  onLongPress={(rect) =>
+                                    void openConversationContextMenu(conversation, rect)
+                                  }
                                 >
-                                  {bulkSelectMode ? (
-                                    <label className="flex shrink-0 cursor-pointer items-center">
-                                      <input
-                                        type="checkbox"
-                                        checked={bulkSelectedIds.has(
-                                          conversation.id
-                                        )}
-                                        onChange={() =>
-                                          toggleConversationBulkSelect(
-                                            conversation.id
-                                          )
-                                        }
-                                        className="sr-only"
-                                      />
-                                      <span
-                                        className={`flex size-4 shrink-0 items-center justify-center rounded-[4px] border-[1.5px] transition-transform duration-150 ease-out ${
-                                          bulkSelectedIds.has(conversation.id)
-                                            ? "scale-110 border-transparent bg-gradient-to-br from-[#7c3aed] to-[#06b6d4]"
-                                            : "scale-100 border-[rgba(255,255,255,0.3)] bg-transparent"
-                                        }`}
-                                      >
-                                        {bulkSelectedIds.has(
-                                          conversation.id
-                                        ) ? (
-                                          <svg
-                                            className="size-2.5 text-white"
-                                            viewBox="0 0 12 12"
-                                            fill="none"
-                                            aria-hidden
-                                          >
-                                            <path
-                                              d="M2.5 6L5 8.5L9.5 3.5"
-                                              stroke="currentColor"
-                                              strokeWidth="1.75"
-                                              strokeLinecap="round"
-                                              strokeLinejoin="round"
-                                            />
-                                          </svg>
-                                        ) : null}
-                                      </span>
-                                    </label>
-                                  ) : (
-                                    iconSpan
-                                  )}
-                                  {textBlock}
+                                  <div className={`relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface}`}>
+                                    {bulkSelectMode ? (
+                                      <label className="flex shrink-0 cursor-pointer items-center">
+                                        <input type="checkbox" checked={bulkSelectedIds.has(conversation.id)} onChange={() => toggleConversationBulkSelect(conversation.id)} className="sr-only" />
+                                        <span className={`flex size-4 shrink-0 items-center justify-center rounded-[4px] border-[1.5px] transition-transform duration-150 ease-out ${bulkSelectedIds.has(conversation.id) ? "scale-110 border-transparent bg-gradient-to-br from-[#7c3aed] to-[#06b6d4]" : "scale-100 border-[rgba(255,255,255,0.3)] bg-transparent"}`}>
+                                          {bulkSelectedIds.has(conversation.id) ? (<svg className="size-2.5 text-white" viewBox="0 0 12 12" fill="none" aria-hidden><path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>) : null}
+                                        </span>
+                                      </label>
+                                    ) : iconSpan}
+                                    {textBlock}
+                                  </div>
+                                </MobileConversationRow>
+                              );
+                            })}
+
+                            {/* Unpinned — grouped by date */}
+                            {groupConversationsByDate(unpinnedOrderedConversations).map(({ label, items }) => (
+                              <div key={label}>
+                                <div
+                                  className="mt-3 flex cursor-pointer select-none items-center justify-between px-2 py-1 first:mt-1 group/grp"
+                                  onClick={() => toggleGroup(label)}
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <motion.div animate={{ rotate: collapsedGroups.has(label) ? -90 : 0 }} transition={{ duration: 0.15 }}>
+                                      <ChevronDown size={10} className="text-muted-foreground/50 transition-colors group-hover/grp:text-muted-foreground" />
+                                    </motion.div>
+                                    <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 transition-colors group-hover/grp:text-muted-foreground">
+                                      {label}
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] text-muted-foreground/40">{items.length}</span>
                                 </div>
-                              </MobileConversationRow>
-                            );
-                          })
+
+                                <AnimatePresence initial={false}>
+                                  {!collapsedGroups.has(label) && (
+                                    <motion.div
+                                      key={label + "-m"}
+                                      initial={{ height: 0, opacity: 0 }}
+                                      animate={{ height: "auto", opacity: 1 }}
+                                      exit={{ height: 0, opacity: 0 }}
+                                      transition={{ duration: 0.2, ease: "easeOut" }}
+                                      style={{ overflow: "hidden" }}
+                                    >
+                                      {items.map((conversation) => {
+                                        const { animClass, rowSurface, iconSpan, textBlock } =
+                                          getConversationRowChrome(conversation);
+                                        return (
+                                          <MobileConversationRow
+                                            key={conversation.id}
+                                            className={`group ${animClass}`}
+                                            conversationId={conversation.id}
+                                            swipeOpenId={swipeOpenConversationId}
+                                            onSwipeOpenChange={setSwipeOpenConversationId}
+                                            onOpen={() => {
+                                              setSwipeOpenConversationId(null);
+                                              void handleOpenConversation(conversation.id);
+                                            }}
+                                            onDeletePress={() =>
+                                              requestDeleteConversation(conversation.id)
+                                            }
+                                            onLongPress={(rect) =>
+                                              void openConversationContextMenu(conversation, rect)
+                                            }
+                                          >
+                                            <div className={`relative flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left transition-colors duration-200 ${rowSurface}`}>
+                                              {bulkSelectMode ? (
+                                                <label className="flex shrink-0 cursor-pointer items-center">
+                                                  <input type="checkbox" checked={bulkSelectedIds.has(conversation.id)} onChange={() => toggleConversationBulkSelect(conversation.id)} className="sr-only" />
+                                                  <span className={`flex size-4 shrink-0 items-center justify-center rounded-[4px] border-[1.5px] transition-transform duration-150 ease-out ${bulkSelectedIds.has(conversation.id) ? "scale-110 border-transparent bg-gradient-to-br from-[#7c3aed] to-[#06b6d4]" : "scale-100 border-[rgba(255,255,255,0.3)] bg-transparent"}`}>
+                                                    {bulkSelectedIds.has(conversation.id) ? (<svg className="size-2.5 text-white" viewBox="0 0 12 12" fill="none" aria-hidden><path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>) : null}
+                                                  </span>
+                                                </label>
+                                              ) : iconSpan}
+                                              {textBlock}
+                                            </div>
+                                          </MobileConversationRow>
+                                        );
+                                      })}
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                            ))}
+                          </>
                         )}
                       </>
                     )
