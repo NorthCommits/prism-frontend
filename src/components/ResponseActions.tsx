@@ -107,7 +107,7 @@ export function ResponseActions(props: ResponseActionsProps) {
       setActiveAction(null);
       return;
     }
-    const t = window.setTimeout(() => setVisible(true), 300);
+    const t = window.setTimeout(() => setVisible(true), 400);
     return () => window.clearTimeout(t);
   }, [isLastMessage, isStreaming]);
 

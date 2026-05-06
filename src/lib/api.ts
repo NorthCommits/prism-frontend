@@ -28,9 +28,6 @@ export interface ChatMessage {
   image_base64?: string;
   image_media_type?: string;
   image_used?: boolean;
-  // Set to true when the response was produced by the multi-step agent.
-  is_agent?: boolean;
-  agent_step_count?: number;
   // Active prompt template id for this turn (echoed from the request).
   active_template?: string;
   // Pre-formatted display label ("{icon} {title}") — set locally, not from backend.
@@ -52,8 +49,6 @@ export interface ChatResponse {
   search_used?: boolean;
   search_query?: string;
   image_used?: boolean;
-  is_agent?: boolean;
-  agent_step_count?: number;
   active_template?: string;
   response_type?: "text" | "plot" | "image";
   plot_json?: object;
@@ -165,11 +160,7 @@ export async function sendMessageStream(
   // Active prompt template id to apply on this turn.
   active_template?: string,
   // Project whose files/instructions are injected into this turn.
-  project_id?: string,
-  // Optional agent-mode progress callbacks.
-  onAgentPlan?: (steps: string[], total: number) => void,
-  onAgentStepStart?: (step: number, total: number, title: string) => void,
-  onAgentStepDone?: (step: number, total: number) => void
+  project_id?: string
 ): Promise<void> {
   try {
     const response = await fetch(`${API_URL}/api/v1/chat`, {
@@ -246,10 +237,6 @@ export async function sendMessageStream(
             type: string;
             content?: string;
             message?: string;
-            steps?: string[];
-            step?: number;
-            total?: number;
-            title?: string;
             [key: string]: unknown;
           };
 
@@ -261,22 +248,6 @@ export async function sendMessageStream(
             onDone();
           } else if (event.type === "error") {
             onError(event.message || "Something went wrong");
-          } else if (event.type === "agent_plan") {
-            onAgentPlan?.(
-              Array.isArray(event.steps) ? (event.steps as string[]) : [],
-              typeof event.total === "number" ? event.total : 0
-            );
-          } else if (event.type === "agent_step_start") {
-            onAgentStepStart?.(
-              typeof event.step === "number" ? event.step : 0,
-              typeof event.total === "number" ? event.total : 0,
-              typeof event.title === "string" ? event.title : ""
-            );
-          } else if (event.type === "agent_step_done") {
-            onAgentStepDone?.(
-              typeof event.step === "number" ? event.step : 0,
-              typeof event.total === "number" ? event.total : 0
-            );
           }
         } catch {
           // Ignore malformed JSON lines.
@@ -293,10 +264,6 @@ export async function sendMessageStream(
             type: string;
             content?: string;
             message?: string;
-            steps?: string[];
-            step?: number;
-            total?: number;
-            title?: string;
             [key: string]: unknown;
           };
 
@@ -308,22 +275,6 @@ export async function sendMessageStream(
             onDone();
           } else if (event.type === "error") {
             onError(event.message || "Something went wrong");
-          } else if (event.type === "agent_plan") {
-            onAgentPlan?.(
-              Array.isArray(event.steps) ? (event.steps as string[]) : [],
-              typeof event.total === "number" ? event.total : 0
-            );
-          } else if (event.type === "agent_step_start") {
-            onAgentStepStart?.(
-              typeof event.step === "number" ? event.step : 0,
-              typeof event.total === "number" ? event.total : 0,
-              typeof event.title === "string" ? event.title : ""
-            );
-          } else if (event.type === "agent_step_done") {
-            onAgentStepDone?.(
-              typeof event.step === "number" ? event.step : 0,
-              typeof event.total === "number" ? event.total : 0
-            );
           }
         } catch {
           // Ignore malformed JSON lines.

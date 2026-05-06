@@ -2683,6 +2683,225 @@ function TestimonialSection() {
   );
 }
 
+const TECH_STACK: {
+  name: string;
+  logo: React.ReactNode;
+}[] = [
+  {
+    name: "OpenAI",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M12 2L15.5 8.5H20.5L16.5 13L18.5 20L12 16.5L5.5 20L7.5 13L3.5 8.5H8.5L12 2Z"
+          fill="white"
+          fillOpacity="0.9"
+        />
+      </svg>
+    ),
+  },
+  {
+    name: "Whisper",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect x="10" y="3" width="4" height="11" rx="2" fill="#10a37f" />
+        <path d="M6 11a6 6 0 0 0 12 0" stroke="#10a37f" strokeWidth="2" strokeLinecap="round" fill="none" />
+        <line x1="12" y1="17" x2="12" y2="21" stroke="#10a37f" strokeWidth="2" strokeLinecap="round" />
+        <line x1="9" y1="21" x2="15" y2="21" stroke="#10a37f" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    name: "OpenRouter",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <circle cx="5" cy="12" r="3" fill="#8b5cf6" />
+        <circle cx="19" cy="6" r="3" fill="#8b5cf6" />
+        <circle cx="19" cy="18" r="3" fill="#8b5cf6" />
+        <line x1="8" y1="10.5" x2="16" y2="7.5" stroke="#8b5cf6" strokeWidth="1.5" />
+        <line x1="8" y1="13.5" x2="16" y2="16.5" stroke="#8b5cf6" strokeWidth="1.5" />
+      </svg>
+    ),
+  },
+  {
+    name: "pgvector",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <ellipse cx="12" cy="6" rx="8" ry="3" fill="#336791" />
+        <path d="M4 6v5c0 1.66 3.58 3 8 3s8-1.34 8-3V6" stroke="#336791" strokeWidth="1.5" fill="none" />
+        <path d="M4 11v5c0 1.66 3.58 3 8 3s8-1.34 8-3v-5" stroke="#336791" strokeWidth="1.5" fill="none" />
+      </svg>
+    ),
+  },
+  {
+    name: "Next.js",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" fill="white" fillOpacity="0.1" stroke="white" strokeWidth="1.5" />
+        <path d="M8 16V8l8 10" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="14" y1="8" x2="16" y2="8" stroke="white" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    name: "FastAPI",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <polygon points="13,3 4,14 11,14 11,21 20,10 13,10" fill="#009688" />
+      </svg>
+    ),
+  },
+  {
+    name: "Supabase",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M12 3L4 17h8v4l8-14h-8V3z" fill="#3ECF8E" />
+      </svg>
+    ),
+  },
+  {
+    name: "Docker",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="11" width="3" height="3" rx="0.5" fill="#2496ED" />
+        <rect x="7" y="11" width="3" height="3" rx="0.5" fill="#2496ED" />
+        <rect x="11" y="11" width="3" height="3" rx="0.5" fill="#2496ED" />
+        <rect x="7" y="7" width="3" height="3" rx="0.5" fill="#2496ED" />
+        <rect x="11" y="7" width="3" height="3" rx="0.5" fill="#2496ED" />
+        <path d="M2 14.5c1 1.5 3 2 5 1.5h10c2 0 4-1.5 4-3.5" stroke="#2496ED" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+        <path d="M19 13.5c1-0.5 2-1.5 2.5-2.5" stroke="#2496ED" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    name: "HuggingFace",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="13" r="8" fill="#FFD21E" fillOpacity="0.2" stroke="#FFD21E" strokeWidth="1.5" />
+        <circle cx="9" cy="11" r="1.2" fill="#FFD21E" />
+        <circle cx="15" cy="11" r="1.2" fill="#FFD21E" />
+        <path d="M8.5 15c1 1.5 5.5 1.5 7 0" stroke="#FFD21E" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+        <path d="M9 6.5C9 5 10 4 12 4s3 1 3 2.5" stroke="#FFD21E" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+      </svg>
+    ),
+  },
+  {
+    name: "Vercel",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M12 4L22 20H2L12 4Z" fill="white" />
+      </svg>
+    ),
+  },
+  {
+    name: "Tailwind",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M6 9c1-4 3.5-5 6-4s3.5 3.5 2 6c1-4 3.5-5 6-4"
+          stroke="#38BDF8"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <path
+          d="M3 15c1-4 3.5-5 6-4s3.5 3.5 2 6c1-4 3.5-5 6-4"
+          stroke="#38BDF8"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+    ),
+  },
+  {
+    name: "Plotly",
+    logo: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <polyline points="3,18 8,10 13,14 18,6" stroke="#3D4DB7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        <circle cx="3" cy="18" r="1.5" fill="#3D4DB7" />
+        <circle cx="8" cy="10" r="1.5" fill="#3D4DB7" />
+        <circle cx="13" cy="14" r="1.5" fill="#3D4DB7" />
+        <circle cx="18" cy="6" r="1.5" fill="#3D4DB7" />
+      </svg>
+    ),
+  },
+];
+
+function TechStackSection() {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref as React.RefObject<HTMLElement>, {
+    once: true,
+    margin: "-80px 0px",
+  });
+
+  return (
+    <section className="border-t border-white/[0.05] bg-black py-20">
+      <div ref={ref} className="mx-auto max-w-[900px] px-6 text-center">
+        {/* Label */}
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.5 }}
+          className="mb-3 text-[11px] font-bold uppercase tracking-[0.2em]"
+          style={{ color: "#8b5cf6" }}
+        >
+          Technology
+        </motion.p>
+
+        {/* Headline */}
+        <motion.h2
+          initial={{ opacity: 0, y: 16 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.6, delay: 0.05 }}
+          className="mb-3 font-bold text-white"
+          style={{ fontSize: "clamp(26px, 3vw, 36px)" }}
+        >
+          Built with the best tools.
+        </motion.h2>
+
+        {/* Subtext */}
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={inView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.6, delay: 0.1 }}
+          className="mx-auto mb-14 max-w-[480px] text-[15px] leading-relaxed"
+          style={{ color: "rgba(255,255,255,0.4)" }}
+        >
+          Every layer of Prism uses production-grade open source and best-in-class APIs.
+        </motion.p>
+
+        {/* Badge grid */}
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {TECH_STACK.map((tech, i) => (
+            <motion.div
+              key={tech.name}
+              initial={{ opacity: 0, y: 16 }}
+              animate={inView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.4, delay: 0.12 + i * 0.05 }}
+              className="group flex items-center gap-2.5 rounded-xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                borderColor: "rgba(255,255,255,0.08)",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.06)";
+                (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.13)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLDivElement).style.background = "rgba(255,255,255,0.03)";
+                (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.08)";
+              }}
+            >
+              <span className="shrink-0">{tech.logo}</span>
+              <span className="text-[14px] font-medium text-white/80">{tech.name}</span>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function FinalCTASection() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref as React.RefObject<HTMLElement>, { once: true, margin: "-80px 0px" });
@@ -2890,6 +3109,7 @@ export default function LandingPage() {
         <ComparisonSection />
         <StatsSection />
         <TestimonialSection />
+        <TechStackSection />
         <FinalCTASection />
         <Footer />
       </div>

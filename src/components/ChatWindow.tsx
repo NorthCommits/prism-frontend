@@ -21,7 +21,6 @@ import {
   FileSpreadsheet,
   FileCode,
   FileText,
-  Zap,
 } from "lucide-react";
 
 import type { AvailableModel, ChatMessage, ModelId } from "../lib/api";
@@ -903,7 +902,7 @@ export function ChatWindow(props: ChatWindowProps) {
                 transition={{ duration: 0.6, times: [0, 0.5, 1], ease: "easeOut" }}
                 className={`chat-message-content w-full min-w-0 break-words rounded-2xl px-5 ${isUser ? "py-3.5" : "py-2.5"} ${textSizeClass} ${
                   isUser ? `${bubbleClass} shadow-sm` : "bg-transparent text-foreground dark:text-[rgba(255,255,255,0.9)]"
-                }`}
+                }${!isUser && chatMessage.isStreaming ? " min-h-[40px]" : ""}`}
               >
                 {/* Inline image for user messages that had an image attached.
                     data: URIs cannot be optimised by next/image. */}
@@ -1192,13 +1191,9 @@ export function ChatWindow(props: ChatWindowProps) {
                   ) : routedTo ? (
                     <motion.div
                       key="routing-badge"
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{
-                        type: "spring",
-                        stiffness: 380,
-                        damping: 28,
-                      }}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3, duration: 0.2, ease: "easeOut" }}
                       className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-2 py-1 text-xs leading-snug text-[rgba(200,180,255,0.9)]"
                     >
                       <span
@@ -1236,17 +1231,7 @@ export function ChatWindow(props: ChatWindowProps) {
                 </div>
               )}
 
-              {!isUser && chatMessage.is_agent && (
-                <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">
-                  <Zap className="size-3 shrink-0" />
-                  <span>
-                    Agent Mode
-                    {chatMessage.agent_step_count
-                      ? ` · ${chatMessage.agent_step_count} steps`
-                      : ""}
-                  </span>
-                </div>
-              )}
+
 
               {!isUser && (chatMessage as ChatMessage & { active_template_label?: string }).active_template_label && (
                 <div className="inline-flex max-w-[80%] items-center gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">

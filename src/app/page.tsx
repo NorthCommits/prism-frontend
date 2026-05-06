@@ -89,7 +89,6 @@ import {
   SortableDesktopConversationRow,
 } from "@/components/SortableDesktopConversationRow";
 import { Onboarding } from "@/components/Onboarding";
-import { AgentProgress } from "@/components/AgentProgress";
 import { ChatInput } from "@/components/ChatInput";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { ChatWindow } from "@/components/ChatWindow";
@@ -313,12 +312,6 @@ function HomeContent() {
   const [isChatWarpingIn, setIsChatWarpingIn] = useState(false);
   const [isChatShaking, setIsChatShaking] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  // Agent-mode progress state — reset on every new message send.
-  const [isAgentMode, setIsAgentMode] = useState(false);
-  const [agentSteps, setAgentSteps] = useState<string[]>([]);
-  const [agentCurrentStep, setAgentCurrentStep] = useState(0);
-  const [agentCompletedSteps, setAgentCompletedSteps] = useState<number[]>([]);
-  const [agentComplete, setAgentComplete] = useState(false);
   // Profile dropdown open/close + keyboard-shortcuts modal.
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -1354,13 +1347,6 @@ function HomeContent() {
 
     const editedThread = options?.editedThread;
 
-    // Reset agent progress from any previous turn.
-    setIsAgentMode(false);
-    setAgentSteps([]);
-    setAgentCurrentStep(0);
-    setAgentCompletedSteps([]);
-    setAgentComplete(false);
-
     setLastSentMessage(message);
 
     let userMessage: ChatMessage;
@@ -1428,27 +1414,7 @@ function HomeContent() {
       }
     }
 
-    setIsLoading(true);
-
-    let persistedUser: ChatMessage = userMessage;
-    try {
-      const savedUser = await saveMessage({
-        conversation_id: conversationId!,
-        role: "user",
-        content: message,
-        model_id: selectedModel,
-        file_used: !!file,
-        file_name: file?.file_name,
-      });
-      persistedUser = {
-        ...userMessage,
-        id: savedUser.id,
-        created_at: savedUser.created_at ?? userMessage.created_at,
-      };
-    } catch {
-      // Ignore message save failure for user message.
-    }
-
+    // Build history and UI state synchronously — no awaits before these.
     const historySource = editedThread ?? messages;
     const historyEnd = editedThread ? editedThread.length - 1 : historySource.length;
     const history: HistoryMessage[] = historySource
@@ -1471,12 +1437,11 @@ function HomeContent() {
     const priorForInitial = editedThread
       ? editedThread.slice(0, -1)
       : messages;
-    const initialMessages = [
-      ...priorForInitial,
-      persistedUser,
-      assistantPlaceholder,
-    ];
-    setMessages(initialMessages);
+
+    // Show user message and assistant placeholder immediately — before any async saves.
+    setMessages([...priorForInitial, userMessage, assistantPlaceholder]);
+    setIsLoading(true);
+
     try {
       const firstSent = localStorage.getItem("prism_first_message_sent");
       if (!firstSent) {
@@ -1500,7 +1465,31 @@ function HomeContent() {
       /* localStorage unavailable */
     }
 
+    // Persist user message; silently update its server-assigned ID when ready.
+    try {
+      const savedUser = await saveMessage({
+        conversation_id: conversationId!,
+        role: "user",
+        content: message,
+        model_id: selectedModel,
+        file_used: !!file,
+        file_name: file?.file_name,
+      });
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === prev.length - 2
+            ? { ...m, id: savedUser.id, created_at: savedUser.created_at ?? m.created_at }
+            : m
+        )
+      );
+    } catch {
+      // Ignore message save failure for user message.
+    }
+
     let assistantContent = "";
+    // Token batching: accumulate tokens and flush once per animation frame for smooth 60fps rendering.
+    let pendingTokens = "";
+    let tokenRafId: number | undefined;
     let latestMetadata:
       | (Partial<{
           reply: string;
@@ -1509,8 +1498,6 @@ function HomeContent() {
           search_used?: boolean;
           search_query?: string;
           image_used?: boolean;
-          is_agent?: boolean;
-          agent_step_count?: number;
           response_type?: "text" | "plot" | "image";
           plot_json?: object;
           image_url?: string;
@@ -1525,18 +1512,21 @@ function HomeContent() {
         history,
         (token) => {
           assistantContent += token;
-          const chunkLen = token.length;
-          setMessages((prev) =>
-            prev.map((m, i) =>
-              i === prev.length - 1
-                ? {
-                    ...m,
-                    content: m.content + token,
-                    lastTokenLength: chunkLen,
-                  }
-                : m
-            )
-          );
+          pendingTokens += token;
+          if (tokenRafId !== undefined) return;
+          tokenRafId = window.requestAnimationFrame(() => {
+            const batch = pendingTokens;
+            pendingTokens = "";
+            tokenRafId = undefined;
+            if (!batch) return;
+            setMessages((prev) =>
+              prev.map((m, i) =>
+                i === prev.length - 1
+                  ? { ...m, content: m.content + batch, lastTokenLength: batch.length }
+                  : m
+              )
+            );
+          });
         },
         (metadata) => {
           latestMetadata = metadata;
@@ -1551,8 +1541,6 @@ function HomeContent() {
                 search_used: metadata.search_used,
                 search_query: metadata.search_query,
                 image_used: metadata.image_used,
-                is_agent: metadata.is_agent,
-                agent_step_count: metadata.agent_step_count,
                 // Keep the pre-set label; backend echo is optional.
                 active_template_label: m.active_template_label ?? (metadata as Record<string, unknown>).active_template_label as string | undefined,
                 response_type: metadata.response_type,
@@ -1576,12 +1564,18 @@ function HomeContent() {
           );
         },
         () => {
+          // Flush any pending batched tokens and finalize with the complete accumulated content.
+          if (tokenRafId !== undefined) {
+            window.cancelAnimationFrame(tokenRafId);
+            tokenRafId = undefined;
+            pendingTokens = "";
+          }
           setIsLoading(false);
 
           setMessages((prev) =>
             prev.map((m, i) =>
               i === prev.length - 1
-                ? { ...m, isStreaming: false, lastTokenLength: undefined }
+                ? { ...m, content: assistantContent, isStreaming: false, lastTokenLength: undefined }
                 : m
             )
           );
@@ -1618,6 +1612,11 @@ function HomeContent() {
           })();
         },
         (error) => {
+          if (tokenRafId !== undefined) {
+            window.cancelAnimationFrame(tokenRafId);
+            tokenRafId = undefined;
+            pendingTokens = "";
+          }
           pushToast("Something went wrong", "error");
           setIsLoading(false);
           setMessages((prev) =>
@@ -1645,27 +1644,13 @@ function HomeContent() {
         template?.id,
         // Project whose files/instructions should be injected.
         activeProject?.id,
-        // Agent-mode progress callbacks.
-        (steps, total) => {
-          setIsAgentMode(true);
-          setAgentSteps(steps);
-          setAgentCurrentStep(0);
-          setAgentCompletedSteps([]);
-          setAgentComplete(false);
-          // Store total in metadata so the badge can show step count.
-          if (total) {
-            void total; // used via steps.length
-          }
-        },
-        (step) => {
-          setAgentCurrentStep(step);
-        },
-        (step, total) => {
-          setAgentCompletedSteps((prev) => [...prev, step]);
-          if (step === total) setAgentComplete(true);
-        }
       );
     } catch {
+      if (tokenRafId !== undefined) {
+        window.cancelAnimationFrame(tokenRafId);
+        tokenRafId = undefined;
+        pendingTokens = "";
+      }
       pushToast("Something went wrong", "error");
       setIsLoading(false);
       setMessages((prev) =>
@@ -3248,14 +3233,6 @@ function HomeContent() {
               </div>
             )}
 
-            {isAgentMode && (
-              <AgentProgress
-                steps={agentSteps}
-                currentStep={agentCurrentStep}
-                completedSteps={agentCompletedSteps}
-                isComplete={agentComplete}
-              />
-            )}
             <ChatWindow
               messages={messages}
               modelsById={modelsById}

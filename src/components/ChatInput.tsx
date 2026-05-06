@@ -404,33 +404,35 @@ export function ChatInput({
     setIsFetchingSuggestions(false);
     suggestionsAbortRef.current?.abort();
     suggestionsAbortRef.current = null;
+
+    // Capture payloads before clearing state.
     const imagePayload = attachedImage
       ? { base64: attachedImage.base64, mediaType: attachedImage.mediaType }
       : undefined;
-
-    // Build the template payload: id for the backend, pre-formatted label for display.
     const templatePayload = activeTemplate
       ? { id: activeTemplate.id, label: `${activeTemplate.icon} ${activeTemplate.title}` }
       : undefined;
+    const filePayload =
+      attachedFile && attachedFile.status === "idle"
+        ? {
+            file_name: attachedFile.file_name,
+            file_type: attachedFile.file_type,
+            file_content: attachedFile.content,
+          }
+        : undefined;
 
-    if (attachedFile && attachedFile.status === "idle") {
-      onSend(
-        trimmed,
-        {
-          file_name: attachedFile.file_name,
-          file_type: attachedFile.file_type,
-          file_content: attachedFile.content,
-        },
-        imagePayload,
-        templatePayload
-      );
-      setAttachedFile(null);
-    } else {
-      onSend(trimmed, undefined, imagePayload, templatePayload);
-    }
+    // Clear input immediately — before onSend so there is no perceptible flicker.
+    onChangeValue("");
+    setAttachedFile(null);
     setAttachedImage(null);
     setActiveTemplate(null);
-    onChangeValue("");
+
+    // Restore focus after the state flush so the user can type again instantly.
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+
+    onSend(trimmed, filePayload, imagePayload, templatePayload);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
