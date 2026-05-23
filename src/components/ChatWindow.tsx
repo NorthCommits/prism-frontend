@@ -157,6 +157,19 @@ function scrollToIncludeLastMessageMetadata(container: HTMLElement) {
   }
 }
 
+function scrollLastAssistantToTop(container: HTMLElement) {
+  const nodes = container.querySelectorAll('[data-message][data-role="assistant"]');
+  const lastAssistant = nodes[nodes.length - 1] as HTMLElement | undefined;
+  if (!lastAssistant) {
+    instantScrollToBottom(container);
+    return;
+  }
+  const cRect = container.getBoundingClientRect();
+  const mRect = lastAssistant.getBoundingClientRect();
+  const delta = mRect.top - cRect.top - 24;
+  container.scrollTop += delta;
+}
+
 
 function StreamingAssistantContent(props: {
   content: string;
@@ -433,17 +446,6 @@ export function ChatWindow(props: ChatWindowProps) {
     }
   };
 
-  const isNearBottom = () => {
-    const container = messagesContainerRef.current;
-    if (!container) return true;
-    return (
-      container.scrollHeight -
-        container.scrollTop -
-        container.clientHeight <
-      NEAR_BOTTOM_FOLLOW
-    );
-  };
-
   const handleScrollToBottom = () => {
     const c = messagesContainerRef.current;
     if (!c) return;
@@ -554,12 +556,15 @@ export function ChatWindow(props: ChatWindowProps) {
     }
 
     if (last.role === "assistant" && !isUserScrollingUpRef.current) {
-      if (isNearBottom()) {
+      window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           const c = messagesContainerRef.current;
-          if (c) smoothScrollToBottom(c);
+          if (c) {
+            scrollLastAssistantToTop(c);
+            lastScrollTopRef.current = c.scrollTop;
+          }
         });
-      }
+      });
     }
   }, [messages]);
 
@@ -587,10 +592,14 @@ export function ChatWindow(props: ChatWindowProps) {
       streamScrollRafRef.current = null;
       const c = messagesContainerRef.current;
       if (!c || isUserScrollingUpRef.current) return;
-      const dist = c.scrollHeight - c.scrollTop - c.clientHeight;
-      if (dist > STREAM_BOTTOM_SLACK) {
-        const maxScroll = Math.max(0, c.scrollHeight - c.clientHeight);
-        c.scrollTo({ top: maxScroll, behavior: "smooth" });
+      const nodes = c.querySelectorAll('[data-message][data-role="assistant"]');
+      const lastMsg = nodes[nodes.length - 1] as HTMLElement | undefined;
+      if (!lastMsg) return;
+      const cRect = c.getBoundingClientRect();
+      const mRect = lastMsg.getBoundingClientRect();
+      const overflow = mRect.bottom - (cRect.bottom - SCROLL_PADDING_BOTTOM);
+      if (overflow > STREAM_BOTTOM_SLACK) {
+        c.scrollTo({ top: c.scrollTop + overflow, behavior: "smooth" });
       }
     });
     prevStreamLenRef.current = len;

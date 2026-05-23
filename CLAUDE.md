@@ -29,12 +29,20 @@ NEXT_PUBLIC_SUPABASE_KEY=your_supabase_publishable_key
 
 ### State Management
 
-All core chat state lives in `src/app/page.tsx` — a single large component (~2000+ lines) that owns conversations, messages, sidebar, streaming state, model selection, project linking, and more. There is no global state library. State is passed down as props or managed locally in each component.
+All core chat state lives in `src/app/page.tsx` — a single large component (~3500 lines) that owns conversations, messages, sidebar, streaming state, model selection, project linking, and more. There is no global state library. State is passed down as props or managed locally in each component.
+
+### Path Alias
+
+`@/*` maps to `./src/*` (configured in `tsconfig.json`). Use `@/components/...`, `@/lib/...`, etc. throughout.
+
+### Custom Hooks
+
+`src/hooks/useMobileKeyboardOpen.ts` — detects whether the software keyboard is open on mobile (by comparing `window.innerHeight` to `screen.height`). Used in `page.tsx` to adjust layout when the keyboard appears.
 
 ### API Layer (`src/lib/`)
 
 - **`api.ts`** — `sendMessageStream` (SSE streaming via `fetch`), `parseFile`, `fetchModels`, `transcribeAudio`. The `ChatMessage` interface is the canonical message shape used throughout the app. **Note:** the `/api/v1/chat` endpoint is unauthenticated — `user_id` is passed in the POST body instead of a Bearer token.
-- **`history.ts`** — Conversation and message CRUD against the backend REST API, semantic search, smart suggestions, chat branching, and export.
+- **`history.ts`** — Conversation and message CRUD against the backend REST API, semantic search, smart suggestions, chat branching, export, and `embedAllConversations` (called once on load to bulk-generate pgvector embeddings for smart suggestions).
 - **`profile.ts`** — User profile (including `voice` preference), memory, productivity scores, onboarding.
 - **`projects.ts`** — Project CRUD, file uploads, conversation linking. `Project` type is defined here.
 - **`feedback.ts`** — `submitFeedback` — posts a thumbs-up/down rating for a single assistant message to `POST /api/v1/feedback`.
@@ -51,7 +59,7 @@ All core chat state lives in `src/app/page.tsx` — a single large component (~2
 
 Messages have an `isStreaming` boolean on `ChatMessage`. While streaming, `ChatWindow` renders plain `whitespace-pre-wrap` text with an animated cursor. On the `done` SSE event, `isStreaming` is set to false and `MarkdownRenderer` renders the full markdown. This prevents re-parsing markdown on every token.
 
-The `/api/v1/chat` SSE stream emits JSON events on each `data:` line:
+The `/api/v1/chat` SSE stream emits JSON events on each `data:` line. `sendMessageStream` handles four types:
 
 | `type` | Payload | Purpose |
 |--------|---------|---------|
@@ -59,9 +67,8 @@ The `/api/v1/chat` SSE stream emits JSON events on each `data:` line:
 | `token` | `{ content: string }` | Streaming text fragment |
 | `done` | — | Stream complete |
 | `error` | `{ message: string }` | Stream error |
-| `agent_plan` | `{ steps: string[], total: number }` | Agent mode: multi-step plan announced |
-| `agent_step_start` | `{ step, total, title }` | Agent mode: step starting |
-| `agent_step_done` | `{ step, total }` | Agent mode: step completed |
+
+All other event types (e.g. agent step events) are silently ignored by the frontend.
 
 The response can also be JSON (`application/json`) instead of SSE when `response_type` is `"plot"` or `"image"`.
 
@@ -69,7 +76,6 @@ The response can also be JSON (`application/json`) instead of SSE when `response
 
 - **`ChatWindow.tsx`** — Renders the message list. Distinguishes streaming vs settled messages. Owns TTS playback state (`speakingMessageId`, `currentAudioRef`) and calls `POST /api/v1/voice/speak` directly. Accepts `userVoice` prop. Handles `onRegenerate`, `onEditMessage`, `onBranch`, `onResponseAction`.
 - **`ChatInput.tsx`** — Input bar with file/image upload, slash commands (`/` triggers template picker from `getTemplates()`), smart context suggestions (debounced 150ms, 3+ chars via `getSmartSuggestions`), and voice recording via `MediaRecorder`. Space on an empty input starts recording (walkie-talkie shortcut).
-- **`AgentProgress.tsx`** — Displays the multi-step agent plan, active step, and progress bar. Driven by `agent_plan`/`agent_step_start`/`agent_step_done` SSE events. Rendered above the chat input while agent is working.
 - **`ResponseActions.tsx`** — Quick follow-up action chips rendered after an assistant message. Actions are defined as `RESPONSE_ACTION_TAGS` in `page.tsx` (`continue`, `shorter`, `longer`, `simpler`, `different`, `examples`, `bullets`).
 - **`MessageActionsBar.tsx`** — Hover action bar for messages. Accepts `onSpeak`/`isSpeaking` props to render the speaker button (assistant messages only). Also provides branch, regenerate, edit, copy, and feedback controls.
 - **`MarkdownRenderer.tsx`** — Wraps `react-markdown` with custom renderers. Uses `CodeBlock` for all code. Uses `PlotRenderer` for `response_type: "plot"` and `ImageRenderer` for `response_type: "image"`.
@@ -137,6 +143,15 @@ Supabase issues a JWT on login. All `src/lib/*.ts` API calls (except `api.ts` ch
 |-----|------|---------|
 | `prism_font_size` | `"small" \| "medium" \| "large"` | Font size preference, read on mount in `page.tsx` |
 | `prism_voice` | string (e.g. `"nova"`) | TTS voice preference, written by profile page, read by `page.tsx` and passed as `userVoice` to `ChatWindow` |
+| `prism_sidebar_collapsed` | `"0" \| "1"` | Sidebar open/closed state |
+| `prism_sidebar_width` | string (px number) | Sidebar drag-resize width |
+| `prism_conv_order` | JSON string (string[]) | Manual drag-reordered conversation IDs |
+| `prism_pinned_conversations` | JSON string (string[]) | Pinned conversation IDs |
+| `prism_visited` | `"true"` | Set after first visit to skip splash screen on return |
+| `prism_pending_profile` | JSON string | Onboarding profile data buffered before auth completes |
+| `prism_first_message_sent` | `"true"` | Triggers first-message confetti via `ReactionAnimation` |
+| `prism_message_count` | string (number) | Running total for milestone reaction (fires at 100) |
+| `prism_install_dismissed_until` | string (timestamp ms) | Suppresses PWA install banner until this time |
 
 `page.tsx` re-syncs `userVoice` from localStorage on `visibilitychange` so changes made on the profile page take effect when the user returns to chat.
 
