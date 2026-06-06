@@ -9,6 +9,7 @@ function shouldHideNav(pathname: string) {
   return (
     pathname === "/landing" ||
     pathname === "/login" ||
+    pathname === "/demo" ||
     pathname.startsWith("/reset-password")
   );
 }

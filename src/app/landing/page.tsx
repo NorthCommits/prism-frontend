@@ -5,6 +5,7 @@ import { motion, useInView } from "motion/react";
 import { ReactLenis, type LenisRef } from "lenis/react";
 import Link from "next/link";
 import { ArrowRight, ArrowUp, Check, ChevronDown, Play, X } from "lucide-react";
+import { DemoChat } from "@/components/DemoChat";
 
 // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -855,179 +856,10 @@ function HeroSection() {
   );
 }
 
-/* Interactive live demo with SSE streaming */
+/* Interactive live demo — delegates all state to DemoChat */
 function LiveDemoSection() {
   const sectionRef = useRef<HTMLDivElement>(null);
   const inView = useInView(sectionRef as React.RefObject<HTMLElement>, { once: true, margin: "-80px 0px" });
-  const messagesScrollRef = useRef<HTMLDivElement>(null);
-
-  /* Accumulate streaming tokens outside React state to avoid stale closures */
-  const streamingRef = useRef("");
-
-  type DemoMessage = {
-    role: "user" | "assistant";
-    content: string;
-    isError?: boolean;
-    /** In-flight assistant row: same DOM node from first token through stream end. */
-    isStreaming?: boolean;
-  };
-
-  const [demoMessages, setDemoMessages] = useState<DemoMessage[]>([
-    { role: "user", content: "What can you help me with?" },
-    {
-      role: "assistant",
-      content:
-        "I'm Prism — your intelligent AI copilot. I can write code, search the web, analyze images, remember your preferences, and tackle complex multi-step tasks. What would you like to explore?",
-    },
-  ]);
-  const [input, setInput]                       = useState("");
-  const [isLoading, setIsLoading]               = useState(false);
-  const [messagesRemaining, setMessagesRemaining] = useState(3);
-  const [limitReached, setLimitReached]         = useState(false);
-
-  const API_URL =
-    process.env.NEXT_PUBLIC_API_URL || "https://prism-backend-sjhg.onrender.com";
-
-  /* Keep newest messages in view inside the demo panel only (avoid scrolling the page) */
-  useEffect(() => {
-    const el = messagesScrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [demoMessages]);
-
-  const sendMessage = async (text?: string) => {
-    const messageText = (text ?? input).trim();
-    if (!messageText || isLoading || limitReached) return;
-
-    const userMsg: DemoMessage = { role: "user", content: messageText };
-    setDemoMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setIsLoading(true);
-    streamingRef.current = "";
-
-    try {
-      const response = await fetch(`${API_URL}/api/v1/demo/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: messageText,
-          /* Send last 4 messages as context, including the one just added */
-          history: [...demoMessages, userMsg].slice(-4),
-        }),
-      });
-
-      if (response.status === 429) {
-        setLimitReached(true);
-        setMessagesRemaining(0);
-        setIsLoading(false);
-        return;
-      }
-
-      if (!response.ok || !response.body) throw new Error("Request failed");
-
-      /* One assistant row for the whole stream — no swap to a second bubble on done. */
-      setDemoMessages((prev) => [...prev, { role: "assistant", content: "", isStreaming: true }]);
-
-      const reader  = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const lines = decoder.decode(value, { stream: true }).split("\n");
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-
-            if (data.type === "metadata") {
-              setMessagesRemaining(data.messages_remaining);
-              if (data.limit_reached) setLimitReached(true);
-            }
-
-            if (data.type === "token") {
-              streamingRef.current += data.content;
-              const accumulated = streamingRef.current;
-              setDemoMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant" && last.isStreaming) {
-                  next[next.length - 1] = { ...last, content: accumulated };
-                }
-                return next;
-              });
-            }
-
-            if (data.type === "done") {
-              const finalText = streamingRef.current;
-              streamingRef.current = "";
-              setDemoMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant" && last.isStreaming) {
-                  next[next.length - 1] = { role: "assistant", content: finalText };
-                }
-                return next;
-              });
-              setIsLoading(false);
-            }
-          } catch {
-            /* Skip malformed SSE lines */
-          }
-        }
-      }
-
-      /* Stream closed without explicit `done` — keep accumulated text and release loading. */
-      setDemoMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant" && last.isStreaming) {
-          next[next.length - 1] = { role: "assistant", content: last.content };
-        }
-        return next;
-      });
-      streamingRef.current = "";
-      setIsLoading(false);
-    } catch {
-      setDemoMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant" && last.isStreaming) {
-          next[next.length - 1] = {
-            role: "assistant",
-            content: "Something went wrong. Please try again.",
-            isError: true,
-          };
-          return next;
-        }
-        return [
-          ...prev,
-          { role: "assistant", content: "Something went wrong. Please try again.", isError: true },
-        ];
-      });
-      setIsLoading(false);
-    }
-  };
-
-  /* Counter badge color: green ≥ 2, amber = 1, red = 0 */
-  const counterColor =
-    messagesRemaining >= 2 ? "#22c55e" : messagesRemaining === 1 ? "#f59e0b" : "#ef4444";
-
-  const suggestedPrompts = [
-    "What makes Prism unique?",
-    "How does smart routing work?",
-    "What can you remember about me?",
-    "Tell me about agent mode",
-  ];
-
-  /* Shared styles for Prism assistant bubbles */
-  const assistantBubbleStyle: React.CSSProperties = {
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "18px 18px 18px 4px",
-    color: "rgba(255,255,255,0.85)",
-  };
 
   return (
     <section
@@ -1084,7 +916,7 @@ function LiveDemoSection() {
           </motion.p>
         </div>
 
-        {/* Chat window — slides up + glows on entrance */}
+        {/* Chat — entrance animation wraps shared DemoChat component */}
         <motion.div
           initial={{ opacity: 0, y: 40, boxShadow: "0 0 0px rgba(139,92,246,0)" }}
           animate={
@@ -1101,179 +933,10 @@ function LiveDemoSection() {
               : {}
           }
           transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-          className="overflow-hidden rounded-[20px]"
-          style={{ border: "1px solid rgba(139,92,246,0.3)", background: "rgba(0,0,0,0.85)" }}
+          className="rounded-[20px]"
         >
-          {/* macOS-style window header */}
-          <div
-            className="flex items-center justify-between border-b px-4 py-3"
-            style={{ borderColor: "rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}
-          >
-            {/* Traffic lights */}
-            <div className="flex items-center gap-2">
-              <div className="h-3 w-3 rounded-full" style={{ background: "#ff5f57" }} />
-              <div className="h-3 w-3 rounded-full" style={{ background: "#ffbd2e" }} />
-              <div className="h-3 w-3 rounded-full" style={{ background: "#28c840" }} />
-            </div>
-
-            <span className="text-[12px] font-medium text-white/30">Prism Demo</span>
-
-            {/* Messages remaining counter */}
-            <span className="text-[11px] font-semibold" style={{ color: counterColor }}>
-              {limitReached
-                ? "Limit reached"
-                : `${messagesRemaining} message${messagesRemaining !== 1 ? "s" : ""} remaining`}
-            </span>
-          </div>
-
-          {/* Scrollable messages area */}
-          <div
-            ref={messagesScrollRef}
-            className="demo-scroll flex flex-col gap-3 overflow-y-auto overflow-x-visible p-5"
-            style={{ height: "320px" }}
-          >
-            {demoMessages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex shrink-0 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                {msg.role === "user" ? (
-                  <div
-                    className="h-auto max-w-[80%] min-h-0 min-w-0 shrink-0 overflow-visible px-4 py-2.5 text-[13px] leading-relaxed text-white"
-                    style={{
-                      background: "linear-gradient(135deg, #8b5cf6, #06b6d4)",
-                      borderRadius: "18px 18px 4px 18px",
-                    }}
-                  >
-                    {msg.content}
-                  </div>
-                ) : (
-                  <div className="max-w-[80%] min-w-0 shrink-0">
-                    <div className="mb-1 flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">
-                        PRISM
-                      </span>
-                    </div>
-                    <div
-                      className="min-h-fit h-auto shrink-0 overflow-visible px-4 py-2.5 text-[13px] leading-relaxed"
-                      style={{
-                        ...assistantBubbleStyle,
-                        ...(msg.isError
-                          ? { borderColor: "rgba(239,68,68,0.4)", color: "rgba(239,68,68,0.85)" }
-                          : {}),
-                      }}
-                    >
-                      {msg.isStreaming && !msg.content ? (
-                        <div className="flex items-center gap-1 py-0.5">
-                          {[0, 1, 2].map((j) => (
-                            <div
-                              key={j}
-                              className="h-1.5 w-1.5 rounded-full bg-white/40"
-                              style={{ animation: `lp-bounce 1s ease-in-out ${j * 0.2}s infinite` }}
-                            />
-                          ))}
-                        </div>
-                      ) : msg.isStreaming ? (
-                        <>
-                          {msg.content}
-                          <span className="lp-cursor ml-0.5 inline-block h-3.5 w-px bg-violet-400" />
-                        </>
-                      ) : (
-                        msg.content
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Input row OR rate-limit CTA */}
-          {limitReached ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, type: "spring" }}
-              className="p-6 text-center"
-              style={{
-                background: "rgba(139,92,246,0.07)",
-                borderTop: "1px solid rgba(139,92,246,0.2)",
-              }}
-            >
-              <p className="mb-1 text-[14px] font-semibold text-white">✦ You&apos;ve tried Prism!</p>
-              <p className="mb-5 text-[13px] leading-relaxed text-white/50">
-                Sign up free to unlock unlimited conversations,
-                <br />
-                memory, voice, and more.
-              </p>
-              <Link
-                href="/login"
-                className="inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-85"
-                style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)" }}
-              >
-                Create Free Account
-                <ArrowRight size={13} />
-              </Link>
-            </motion.div>
-          ) : (
-            <div
-              className="flex items-center gap-3 px-4 py-3"
-              style={{
-                borderTop: "1px solid rgba(255,255,255,0.06)",
-                background: "rgba(255,255,255,0.02)",
-              }}
-            >
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder="Ask Prism anything..."
-                disabled={isLoading}
-                className="flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-white/25 disabled:opacity-50"
-              />
-              <button
-                onClick={() => sendMessage()}
-                disabled={!input.trim() || isLoading || limitReached}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition-all hover:scale-105 hover:shadow-[0_0_12px_rgba(139,92,246,0.5)] disabled:opacity-40 disabled:hover:scale-100"
-                style={{ background: "linear-gradient(135deg, #7c3aed, #06b6d4)" }}
-              >
-                {isLoading ? (
-                  /* CSS spinner — uses lp-spin keyframe via inline style to avoid display:inline-block override */
-                  <div
-                    className="h-3.5 w-3.5 rounded-full border-2 border-white/30 border-t-white"
-                    style={{ animation: "lp-spin 0.8s linear infinite" }}
-                  />
-                ) : (
-                  <ArrowUp size={15} />
-                )}
-              </button>
-            </div>
-          )}
+          <DemoChat compact />
         </motion.div>
-
-        {/* Suggested prompt chips */}
-        <div className="mt-5 flex flex-wrap justify-center gap-2">
-          {suggestedPrompts.map((prompt, i) => (
-            <motion.button
-              key={prompt}
-              initial={{ opacity: 0, y: 8 }}
-              animate={inView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.4, delay: 0.4 + i * 0.08 }}
-              onClick={() => sendMessage(prompt)}
-              disabled={isLoading || limitReached}
-              className="cursor-pointer rounded-full border px-4 py-2 text-[13px] text-white/60 transition-all hover:border-violet-500/50 hover:text-white disabled:opacity-40"
-              style={{ borderColor: "rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.02)" }}
-            >
-              ✦ {prompt}
-            </motion.button>
-          ))}
-        </div>
       </div>
     </section>
   );
