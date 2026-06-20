@@ -133,11 +133,22 @@ function instantScrollUserMessageToTop(container: HTMLElement) {
     instantScrollToBottom(container);
     return;
   }
-  const cRect = container.getBoundingClientRect();
-  const mRect = lastUser.getBoundingClientRect();
-  const delta = mRect.top - cRect.top - 24;
-  container.scrollTop += delta;
+  container.scrollTop = Math.max(0, lastUser.offsetTop - 24);
 }
+
+
+// function instantScrollUserMessageToTop(container: HTMLElement) {
+//   const nodes = container.querySelectorAll('[data-message][data-role="user"]');
+//   const lastUser = nodes[nodes.length - 1] as HTMLElement | undefined;
+//   if (!lastUser) {
+//     instantScrollToBottom(container);
+//     return;
+//   }
+//   const cRect = container.getBoundingClientRect();
+//   const mRect = lastUser.getBoundingClientRect();
+//   const delta = mRect.top - cRect.top - 24;
+//   container.scrollTop += delta;
+// }
 
 function scrollToIncludeLastMessageMetadata(container: HTMLElement) {
   const messageEls = container.querySelectorAll("[data-message]");
@@ -164,11 +175,22 @@ function scrollLastAssistantToTop(container: HTMLElement) {
     instantScrollToBottom(container);
     return;
   }
-  const cRect = container.getBoundingClientRect();
-  const mRect = lastAssistant.getBoundingClientRect();
-  const delta = mRect.top - cRect.top - 24;
-  container.scrollTop += delta;
+  container.scrollTop = Math.max(0, lastAssistant.offsetTop - 24);
 }
+
+
+// function scrollLastAssistantToTop(container: HTMLElement) {
+//   const nodes = container.querySelectorAll('[data-message][data-role="assistant"]');
+//   const lastAssistant = nodes[nodes.length - 1] as HTMLElement | undefined;
+//   if (!lastAssistant) {
+//     instantScrollToBottom(container);
+//     return;
+//   }
+//   const cRect = container.getBoundingClientRect();
+//   const mRect = lastAssistant.getBoundingClientRect();
+//   const delta = mRect.top - cRect.top - 24;
+//   container.scrollTop += delta;
+// }
 
 
 function StreamingAssistantContent(props: {
@@ -555,6 +577,20 @@ export function ChatWindow(props: ChatWindowProps) {
       return;
     }
 
+    // if (last.role === "assistant" && !isUserScrollingUpRef.current) {
+    //   window.requestAnimationFrame(() => {
+    //     window.requestAnimationFrame(() => {
+    //       window.setTimeout(() => {
+    //         const c = messagesContainerRef.current;
+    //         if (c) {
+    //           scrollLastAssistantToTop(c);
+    //           lastScrollTopRef.current = c.scrollTop;
+    //         }
+    //       }, 80);
+    //     });
+    //   });
+    // }
+
     if (last.role === "assistant" && !isUserScrollingUpRef.current) {
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
@@ -909,7 +945,7 @@ export function ChatWindow(props: ChatWindowProps) {
                     : {}
                 }
                 transition={{ duration: 0.6, times: [0, 0.5, 1], ease: "easeOut" }}
-                className={`chat-message-content w-full min-w-0 break-words rounded-2xl px-5 ${isUser ? "py-3.5" : "py-2.5"} ${textSizeClass} ${
+                className={`chat-message-content ${isUser ? "w-fit max-w-full" : "w-full"} min-w-0 break-words rounded-2xl px-5 ${isUser ? "py-3.5" : "py-2.5"} ${textSizeClass} ${
                   isUser ? `${bubbleClass} shadow-sm` : "bg-transparent text-foreground dark:text-[rgba(255,255,255,0.9)]"
                 }${!isUser && chatMessage.isStreaming ? " min-h-[40px]" : ""}`}
               >
@@ -1203,15 +1239,15 @@ export function ChatWindow(props: ChatWindowProps) {
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3, duration: 0.2, ease: "easeOut" }}
-                      className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-2 py-1 text-xs leading-snug text-[rgba(200,180,255,0.9)]"
+                      className="prism-routing-badge-anim inline-flex max-w-[80%] items-start gap-1 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-2 py-1 text-xs leading-snug text-[rgba(109,40,217,0.95)] dark:text-[rgba(200,180,255,0.9)]"
                     >
                       <span
-                        className="mt-px shrink-0 text-[12px] leading-none text-[rgba(200,180,255,0.9)]"
+                        className="mt-px shrink-0 text-[12px] leading-none text-[rgba(109,40,217,0.95)] dark:text-[rgba(200,180,255,0.9)]"
                         aria-hidden
                       >
                         ✦
                       </span>
-                      <span className="whitespace-pre-wrap text-[rgba(200,180,255,0.9)]">
+                      <span className="whitespace-pre-wrap text-[rgba(109,40,217,0.95)] dark:text-[rgba(200,180,255,0.9)]">
                         Auto-routed to{" "}
                         {routedTo === "coding" ? "Coding" : "Writing"}
                         {routingReason
@@ -1224,7 +1260,7 @@ export function ChatWindow(props: ChatWindowProps) {
               )}
 
               {!isUser && searchUsed && (
-                <div className="inline-flex max-w-[80%] items-start gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(200,180,255,0.9)]">
+                <div className="inline-flex max-w-[80%] items-start gap-1.5 rounded-full border border-[rgba(139,92,246,0.3)] bg-[rgba(139,92,246,0.15)] px-3 py-1.5 text-[11px] leading-snug text-[rgba(109,40,217,0.95)] dark:text-[rgba(200,180,255,0.9)]">
                   <span className="mt-[1px] text-xs">🔍</span>
                   <span className="whitespace-pre-wrap">
                     Web search

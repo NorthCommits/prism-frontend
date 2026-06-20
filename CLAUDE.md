@@ -35,6 +35,8 @@ All core chat state lives in `src/app/page.tsx` — a single large component (~3
 
 `@/*` maps to `./src/*` (configured in `tsconfig.json`). Use `@/components/...`, `@/lib/...`, etc. throughout.
 
+All reusable components live in `src/components/`. The `src/components/ui/` sub-directory holds shadcn/ui primitives (`button`, `card`, `input`, `select`, `separator`, `switch`). Use `cn()` from `src/lib/utils.ts` (re-exports `clsx` + `tailwind-merge`) for conditional class merging.
+
 ### Custom Hooks
 
 `src/hooks/useMobileKeyboardOpen.ts` — detects whether the software keyboard is open on mobile (by comparing `window.innerHeight` to `screen.height`). Used in `page.tsx` to adjust layout when the keyboard appears.
@@ -89,6 +91,12 @@ The response can also be JSON (`application/json`) instead of SSE when `response
 - **`SortableDesktopConversationRow.tsx`** — Drag-and-drop sortable conversation rows using `@dnd-kit/core`. Also exports `PinnedDesktopConversationRow` for pinned items and `ConversationRowDragGhost` for the drag overlay.
 - **`ConversationPreview.tsx`** — Hover/tap preview card showing recent messages for a conversation.
 - **`ConversationContextMenu.tsx`** — Right-click context menu for conversations (rename, delete, pin, branch, export).
+- **`DemoChat.tsx`** — Self-contained unauthenticated chat widget used by the `/demo` route. Includes its own inline CSS keyframes (prefixed `dm-`) so it can be embedded in iframes without the global stylesheet. CTA links open in a new tab.
+- **`ModelToggle.tsx`** — Dropdown built on `shadcn/ui` Select that lets the user switch between `coding`, `writing`, and `auto` model modes. Used inside `Navbar.tsx`.
+- **`ProjectPicker.tsx`** — Popover for selecting or clearing the active project before sending a message. Fetches projects on open; links to `/projects` for creation.
+- **`MessageFeedback.tsx`** — Thumbs-up/down widget rendered below assistant messages. Shows an optional text input when rated; auto-submits silently after 5 seconds if the input is never opened. Uses `submitFeedback` from `feedback.ts`.
+- **`CreateProjectModal.tsx`** — Modal for creating or editing a project (toggled by the `project` prop). Supports `PROJECT_COLORS` palette from `projects.ts`.
+- **`ReactionAnimation.tsx`** — Confetti particle burst anchored to the bottom-centre of the viewport. Triggered by `prism_first_message_sent` localStorage key and at the 100-message milestone.
 
 ### Sidebar Conversation Features
 
@@ -110,6 +118,7 @@ The response can also be JSON (`application/json`) instead of SSE when `response
 | `/projects` | Projects list |
 | `/projects/[id]` | Project detail, file uploads, linked conversations |
 | `/landing` | Public marketing page (Lenis smooth scroll, Framer Motion) |
+| `/demo` | Unauthenticated embeddable chat demo — no auth, no sidebar, iframe-safe |
 
 ### Auth Flow
 

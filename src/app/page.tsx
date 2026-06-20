@@ -296,6 +296,7 @@ function HomeContent() {
   const [bootIsNewUser, setBootIsNewUser] = useState(false);
   const [bootFirstName, setBootFirstName] = useState("");
   const bootstrapRunIdRef = useRef(0);
+  const conversationsLoadedRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -669,15 +670,30 @@ function HomeContent() {
 
         if (!skipVisual) setLoadingProgress(40);
 
-        try {
-          setIsConversationsLoading(true);
-          const items = await getConversations();
-          if (!isStale()) setConversations(items);
-        } catch {
-          if (!isStale()) setConversations([]);
-        } finally {
-          if (!isStale()) setIsConversationsLoading(false);
+        if (!conversationsLoadedRef.current) {
+          try {
+            setIsConversationsLoading(true);
+            const items = await getConversations();
+            if (!isStale()) {
+              setConversations(items);
+              conversationsLoadedRef.current = true;
+            }
+          } catch {
+            if (!isStale()) setConversations([]);
+          } finally {
+            if (!isStale()) setIsConversationsLoading(false);
+          }
         }
+
+        // try {
+        //   setIsConversationsLoading(true);
+        //   const items = await getConversations();
+        //   if (!isStale()) setConversations(items);
+        // } catch {
+        //   if (!isStale()) setConversations([]);
+        // } finally {
+        //   if (!isStale()) setIsConversationsLoading(false);
+        // }
         if (isStale()) return;
 
         if (!skipVisual) setLoadingProgress(60);
