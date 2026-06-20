@@ -58,6 +58,8 @@ type ChatWindowProps = {
   ) => void;
   /** Preferred TTS voice from the user's profile settings. */
   userVoice?: string;
+  /** Called once when the last assistant message finishes streaming and contains an artifact. */
+  onArtifactDetected?: (content: string, language: string) => void;
 };
 
 // Basic parser to split plain text and fenced code blocks for readable display.
@@ -330,6 +332,25 @@ function StreamingCursor(props: { isStreaming: boolean; hasText: boolean }) {
   );
 }
 
+function extractArtifact(content: string): { code: string; language: string } | null {
+  const regex = /```(\w+)?\n([\s\S]*?)```/g;
+  let best: { code: string; language: string } | null = null;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    const lang = match[1] || "text";
+    const code = match[2];
+    if (!best || code.length > best.code.length) {
+      best = { code, language: lang };
+    }
+  }
+  if (best) return best;
+  const plain = content.trim();
+  if (plain.length > 300 && !plain.startsWith("{")) {
+    return { code: plain, language: "markdown" };
+  }
+  return null;
+}
+
 export function ChatWindow(props: ChatWindowProps) {
   const {
     messages,
@@ -345,7 +366,11 @@ export function ChatWindow(props: ChatWindowProps) {
     fontSize = "medium",
     onResponseAction,
     userVoice,
+    onArtifactDetected,
   } = props;
+
+  const onArtifactDetectedRef = useRef(onArtifactDetected);
+  onArtifactDetectedRef.current = onArtifactDetected;
   const { addToast } = useToast();
   const textSizeClass =
     fontSize === "small"
@@ -684,6 +709,10 @@ export function ChatWindow(props: ChatWindowProps) {
       Haptics.responseComplete();
       const idx = messages.length - 1;
       setCompletionPulseIndex(idx);
+      const artifactResult = extractArtifact(String(last.content ?? ""));
+      if (artifactResult && onArtifactDetectedRef.current) {
+        onArtifactDetectedRef.current(artifactResult.code, artifactResult.language);
+      }
       const t = window.setTimeout(() => setCompletionPulseIndex(null), 650);
       const tMeta = window.setTimeout(() => {
         if (isUserScrollingUpRef.current) return;

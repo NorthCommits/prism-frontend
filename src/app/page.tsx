@@ -92,6 +92,7 @@ import { Onboarding } from "@/components/Onboarding";
 import { ChatInput } from "@/components/ChatInput";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { ChatWindow } from "@/components/ChatWindow";
+import { ArtifactPanel } from "@/components/ArtifactPanel";
 import { ModelToggle } from "@/components/ModelToggle";
 import { SplashScreen } from "@/components/SplashScreen";
 import { ToastContainer, ToastProvider, pushToast } from "@/components/Toast";
@@ -300,6 +301,8 @@ function HomeContent() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [lastSentMessage, setLastSentMessage] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [artifact, setArtifact] = useState<{ content: string; language: string } | null>(null);
+  const [isArtifactOpen, setIsArtifactOpen] = useState(false);
   const [newConversationId, setNewConversationId] = useState<string | null>(
     null
   );
@@ -1973,6 +1976,13 @@ function HomeContent() {
     );
   };
 
+  const handleArtifactDetected = useCallback((content: string, language: string) => {
+    setArtifact({ content, language });
+    if (!isMobile) {
+      setIsArtifactOpen(true);
+    }
+  }, [isMobile]);
+
   const handleQuoteReply = (quotedText: string) => {
     setInputValue(quotedText);
     // Focus input after React applies the new value.
@@ -3194,6 +3204,8 @@ function HomeContent() {
             </div>
           </header>
 
+          <div className="flex flex-1 min-h-0 relative">
+          <div className={`flex flex-col flex-1 min-h-0 transition-all duration-300${isArtifactOpen && !isMobile ? " mr-[45%]" : ""}`}>
           <main className="flex min-h-0 flex-1 flex-col">
             {/* Branch banner — shown when viewing a branched conversation */}
             {activeConversationId && (() => {
@@ -3266,8 +3278,20 @@ function HomeContent() {
                 handleSend(text);
               }}
               userVoice={userVoice}
+              onArtifactDetected={handleArtifactDetected}
             />
           </main>
+          </div>
+          <AnimatePresence>
+            {isArtifactOpen && artifact && (
+              <ArtifactPanel
+                content={artifact.content}
+                language={artifact.language}
+                onClose={() => setIsArtifactOpen(false)}
+              />
+            )}
+          </AnimatePresence>
+          </div>
         </div>
 
         {/*
@@ -3276,7 +3300,8 @@ function HomeContent() {
           so the composer reads as floating; ChatInput uses pointer-events-auto.
         */}
         <div
-          className={`pointer-events-none fixed inset-x-0 z-[55] bg-transparent px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] ${
+          style={{ right: isArtifactOpen && !isMobile ? "45%" : undefined }}
+          className={`pointer-events-none fixed inset-x-0 z-[55] bg-transparent px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] transition-[right] duration-300 ${
             keyboardOpen
               ? "bottom-0"
               : "bottom-0 max-md:bottom-[calc(4rem+env(safe-area-inset-bottom))]"
@@ -3318,6 +3343,23 @@ function HomeContent() {
             }}
           />
         </div>
+
+        {/* Mobile floating button to open artifact panel */}
+        {isMobile && artifact && !isArtifactOpen && (
+          <div
+            className="fixed right-4 z-[54]"
+            style={{ bottom: "calc(6rem + env(safe-area-inset-bottom, 0px))" }}
+          >
+            <button
+              type="button"
+              onClick={() => setIsArtifactOpen(true)}
+              className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#7c3aed] to-[#06b6d4] px-3 py-2 text-xs font-medium text-white shadow-lg transition-opacity hover:opacity-90"
+            >
+              <Code2 className="size-4" />
+              View Artifact
+            </button>
+          </div>
+        )}
         </div>
 
       <ConversationContextMenu
